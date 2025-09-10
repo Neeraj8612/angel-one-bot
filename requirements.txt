@@ -3,3 +3,4 @@ smartapi-python
 python-dotenv
 pyotp
 requests
+pandas
