@@ -1,5 +1,5 @@
 streamlit
-smartapi
+smartapi-python
 python-dotenv
 pyotp
 requests
