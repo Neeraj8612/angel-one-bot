@@ -158,62 +158,99 @@ def try_search_variants(obj, symbol: str, exchange: str = None):
 
 # ---------------- existing helper functions kept as-is ----------------
 def try_fetch_candles(obj, symbol_token, interval="5min", days_back=1):
-    to_dt = datetime.now()
+    to_dt   = datetime.now()
     from_dt = to_dt - timedelta(days=days_back)
-    interval_map = {"1min":"ONE_MINUTE","5min":"FIVE_MINUTE","15min":"FIFTEEN_MINUTE",
-                    "1minute":"ONE_MINUTE","5minute":"FIVE_MINUTE","15minute":"FIFTEEN_MINUTE"}
-    iarg = interval_map.get(interval, interval)
+    imap    = {
+        "1min":"ONE_MINUTE",  "5min":"FIVE_MINUTE",  "15min":"FIFTEEN_MINUTE",
+        "1minute":"ONE_MINUTE","5minute":"FIVE_MINUTE","15minute":"FIFTEEN_MINUTE",
+    }
+    iarg = imap.get(interval, interval)
 
-    variants = [
-        lambda: obj.getCandleData({
-            "exchange":"NFO",
+    params = {
+        "exchange":   "NFO",
+        "symboltoken": str(symbol_token),
+        "interval":    iarg,
+        "fromdate":    from_dt.strftime("%Y-%m-%d %H:%M"),
+        "todate":      to_dt.strftime("%Y-%m-%d %H:%M")
+    }
+
+    try:
+        res = obj.getCandleData(params)  # API से data लाओ
+    except Exception as e:
+        raise RuntimeError(f"API call failed: {e}")  # अगर API ही fail हो जाए
+
+    if not res or "data" not in res or not res["data"]:
+        raise RuntimeError("Token ya interval ke liye koi candle data nahi mila")  # Data missing
+
+    # अब data को line-by-line पढ़ो और DataFrame बनाओ
+    try:
+        rows = []
+        for row in res["data"]:
+            if len(row) < 6:
+                continue  # अगर row अधूरी है तो छोड़ दो
+            rows.append({
+                "timestamp": row[0],
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": int(row[5])
+            })
+
+        if not rows:
+            raise RuntimeError("Data mila, par parse nahi ho paaya")  # Parsing fail
+
+        df = pd.DataFrame(rows)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        return df
+
+    except Exception as e:
+        raise RuntimeError(f"Parsing mein error: {e}")
+
+def try_fetch_historical_candles(obj, symbol_token, interval, target_date):
+    """Fetches candle data for a specific historical date."""
+    try:
+        from_dt = target_date.strftime("%Y-%m-%d") + " 09:15"
+        to_dt = target_date.strftime("%Y-%m-%d") + " 15:30"
+        
+        interval_map = {"1min":"ONE_MINUTE","5min":"FIVE_MINUTE","15min":"FIFTEEN_MINUTE"}
+        iarg = interval_map.get(interval, interval)
+
+        params = {
+            "exchange": "NFO",
             "symboltoken": str(symbol_token),
             "interval": iarg,
-            "fromdate": from_dt.strftime("%Y-%m-%d %H:%M"),
-            "todate": to_dt.strftime("%Y-%m-%d %H:%M")
-        }),
-        lambda: obj.getCandleData("NFO", str(symbol_token), iarg, from_dt.strftime("%Y-%m-%d %H:%M"), to_dt.strftime("%Y-%m-%d %H:%M")),
-        lambda: obj.getCandleData(str(symbol_token), iarg),
-    ]
-    last_exc = None
-    for fn in variants:
-        try:
-            res = fn()
-            if not res:
-                continue
-            if isinstance(res, dict):
-                data = res.get("data") or res.get("candles") or res
-            else:
-                data = res
-            rows = []
-            if isinstance(data, list):
-                for c in data:
-                    if isinstance(c, (list, tuple)) and len(c) >= 6:
-                        rows.append({
-                            "timestamp": pd.to_datetime(c[0]),
-                            "open": float(c[1]),
-                            "high": float(c[2]),
-                            "low": float(c[3]),
-                            "close": float(c[4]),
-                            "volume": float(c[5]) if len(c)>5 else 0
-                        })
-                    elif isinstance(c, dict):
-                        rows.append({
-                            "timestamp": pd.to_datetime(c.get("time") or c.get("timestamp") or c.get("date")),
-                            "open": float(c.get("open") or c.get("o") or 0),
-                            "high": float(c.get("high") or c.get("h") or 0),
-                            "low": float(c.get("low") or c.get("l") or 0),
-                            "close": float(c.get("close") or c.get("c") or 0),
-                            "volume": float(c.get("volume") or c.get("v") or 0)
-                        })
-            if rows:
-                df = pd.DataFrame(rows).sort_values("timestamp").reset_index(drop=True)
-                return df
-        except Exception as e:
-            last_exc = e
-            continue
-    raise last_exc or RuntimeError("Failed to fetch candles")
+            "fromdate": from_dt,
+            "todate": to_dt
+        }
+        
+        res = obj.getCandleData(params)
 
+        if not res or 'data' not in res or not res['data']:
+            print(f"No data received for {target_date.strftime('%Y-%m-%d')}. Response: {res}")
+            return None
+
+        rows = []
+        for c in res['data']:
+            if isinstance(c, (list, tuple)) and len(c) >= 6:
+                rows.append({
+                    "timestamp": pd.to_datetime(c[0]),
+                    "open": float(c[1]),
+                    "high": float(c[2]),
+                    "low": float(c[3]),
+                    "close": float(c[4]),
+                    "volume": float(c[5])
+                })
+        
+        if rows:
+            df = pd.DataFrame(rows).sort_values("timestamp").reset_index(drop=True)
+            return df
+        return None
+    except Exception as e:
+        print(f"Error fetching historical candles for {target_date.strftime('%Y-%m-%d')}: {e}")
+        st.error(f"Failed to fetch historical data: {e}")
+        return None
+    
 def find_token_in_search(search_dict, expiry, strike, option_cepe):
     """Scan instrument master search response for a matching token + tradingsymbol"""
     if not search_dict or "data" not in search_dict:
@@ -251,8 +288,32 @@ def get_option_ltp(obj, exchange, tradingsymbol, symboltoken):
     except Exception as e:
         raise
 
+def find_nifty_futures_token(search_dict):
+    """Finds the symbol token for the nearest NIFTY futures contract."""
+    if not search_dict or "data" not in search_dict:
+        return None
+    
+    nifty_futures = []
+    for item in search_dict.get("data", []):
+        # normalize keys
+        itm = {k.lower(): v for k, v in item.items()}
+        name = itm.get("name", "")
+        inst_type = itm.get("instrumenttype", "")
+        
+        if name == "NIFTY" and inst_type == "FUTIDX":
+            nifty_futures.append(item)
+    
+    if not nifty_futures:
+        return None
+    
+    # Sort by expiry to find the nearest contract
+    nifty_futures.sort(key=lambda x: x.get("expiry", ""))
+    
+    # Return the token of the first (nearest) future
+    return nifty_futures[0].get("symboltoken")
+
 # ---------------- Strategy helpers (same as before) ----------------
-def is_doji_row(row, tol=0.30):
+def is_doji_row(row, tol=0.25):
     rng = row["high"] - row["low"]
     if rng <= 0:
         return False
@@ -546,47 +607,95 @@ if st.session_state["logged_in"] and st.session_state["obj"]:
         except Exception as e:
             st.error(f"Strategy run failed: {e}")
 
+# --------- 4) Backtest Strategy ---------
     st.markdown("---")
-    st.subheader("Paper Trades (history)")
-
-    # अगर कोई पेपर ट्रेड मौजूद है, तभी फिल्टर दिखाएंगे
-    if st.session_state["paper_trades"]:
-        # 1. डेटा को DataFrame में बदलना
-        df_tr = pd.DataFrame(st.session_state["paper_trades"])
-        # महत्वपूर्ण: 'time' कॉलम को टेक्स्ट से datetime ऑब्जेक्ट में बदलना ताकि फिल्टर हो सके
-        df_tr['time'] = pd.to_datetime(df_tr['time'])
-
-        # 2. UI में फिल्टर के लिए ऑप्शन बनाना
-        st.write("Filter trades by date:")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # तारीख चुनने के लिए कैलेंडर
-            selected_date = st.date_input("Select Date", datetime.now().date())
-        
-        with col2:
-            # "Show All" का ऑप्शन देने के लिए चेकबॉक्स
-            show_all = st.checkbox("Show all trades", value=False)
-
-        # 3. फिल्टर लॉजिक
-        if show_all:
-            # अगर चेकबॉक्स टिक है, तो सारे ट्रेड दिखाओ
-            st.dataframe(df_tr)
+    st.header("4) Backtest Strategy on Historical Data (using NIFTY Futures)")
+    backtest_date = st.date_input("Select a date for backtesting", datetime.now().date() - timedelta(days=1))
+    hypothetical_option_price = st.number_input("Enter a hypothetical option entry price (e.g., 120):", value=120)
+    
+    if st.button("▶ Run Backtest Now"):
+        if backtest_date.weekday() in [5, 6]:
+            st.error("The selected date is a Saturday or Sunday. Please select a trading day.")
+        elif backtest_date >= datetime.now().date():
+            st.warning("Please select a date in the past for backtesting.")
         else:
-            # अगर चेकबॉक्स टिक नहीं है, तो चुनी हुई तारीख के हिसाब से फिल्टर करो
-            filtered_df = df_tr[df_tr['time'].dt.date == selected_date]
-            if filtered_df.empty:
-                st.info(f"No trades found for {selected_date.strftime('%d-%b-%Y')}.")
-            else:
-                st.dataframe(filtered_df)
+            try:
+                # NIFTY फ्यूचर्स का टोकन खोजना
+                futures_token = find_nifty_futures_token(st.session_state.get("search_raw", {}))
+                
+                if not futures_token:
+                    st.error("NIFTY Futures token not found. Please click 'Get NIFTY Options' button first.")
+                else:
+                    st.info(f"Using NIFTY Futures (Token: {futures_token}) for backtesting.")
+                    with st.spinner(f"Fetching futures data for {backtest_date.strftime('%Y-%m-%d')}..."):
+                        # फ्यूचर्स टोकन का उपयोग करके ऐतिहासिक डेटा लाना
+                        df_historical = try_fetch_historical_candles(obj, futures_token, interval, backtest_date)
+                    
+                    if df_historical is not None and not df_historical.empty:
+                        st.write("Running strategy on Futures data to find signals...")
+                        signals = detect_doji_and_entry(df_historical)
+                        if not signals:
+                            st.info(f"No valid signals found for {backtest_date.strftime('%Y-%m-%d')}.")
+                        else:
+                            st.success(f"Found {len(signals)} signal(s)!")
+                            # ... (बाकी का कोड वही रहेगा)
+                            signals_display = []
+                            for sig in signals:
+                                entry_time = df_historical.iloc[sig['entry_index']]['timestamp']
+                                index_entry_price = sig['entry_price']
+                                atm_strike = round(index_entry_price / 50) * 50
+                                signals_display.append({
+                                    "Signal Time": entry_time.strftime('%H:%M:%S'), "Futures Entry Price": index_entry_price,
+                                    "ATM Strike": f"{atm_strike} CE", "Hypothetical Option Entry": hypothetical_option_price,
+                                    "Calculated SL": hypothetical_option_price - 10, "Calculated TP": hypothetical_option_price + 20
+                                })
+                            st.table(pd.DataFrame(signals_display))
+                    else:
+                        st.error(f"Could not fetch futures data. The selected date might be a market holiday.")
+            except Exception as e:
+                st.error(f"Backtest failed: {e}")
 
+st.markdown("---")
+st.subheader("Paper Trades (history)")
+
+# अगर कोई पेपर ट्रेड मौजूद है, तभी फिल्टर दिखाएंगे
+if st.session_state["paper_trades"]:
+    # 1. डेटा को DataFrame में बदलना
+    df_tr = pd.DataFrame(st.session_state["paper_trades"])
+    # महत्वपूर्ण: 'time' कॉलम को टेक्स्ट से datetime ऑब्जेक्ट में बदलना ताकि फिल्टर हो सके
+    df_tr['time'] = pd.to_datetime(df_tr['time'])
+
+    # 2. UI में फिल्टर के लिए ऑप्शन बनाना
+    st.write("Filter trades by date:")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # तारीख चुनने के लिए कैलेंडर
+        selected_date = st.date_input("Select Date", datetime.now().date())
+    
+    with col2:
+        # "Show All" का ऑप्शन देने के लिए चेकबॉक्स
+        show_all = st.checkbox("Show all trades", value=False)
+
+    # 3. फिल्टर लॉजिक
+    if show_all:
+        # अगर चेकबॉक्स टिक है, तो सारे ट्रेड दिखाओ
+        st.dataframe(df_tr)
     else:
-        st.info("No paper trades have been recorded yet.")
+        # अगर चेकबॉक्स टिक नहीं है, तो चुनी हुई तारीख के हिसाब से फिल्टर करो
+        filtered_df = df_tr[df_tr['time'].dt.date == selected_date]
+        if filtered_df.empty:
+            st.info(f"No trades found for {selected_date.strftime('%d-%b-%Y')}.")
+        else:
+            st.dataframe(filtered_df)
 
-    st.markdown("Debug: raw instrument master / search response")
-    if st.session_state.get("search_raw"):
-        with st.expander("Raw search response (first 50 rows)"):
-            st.write(st.session_state["search_raw"].get("data", [])[:50])
+else:
+    st.info("No paper trades have been recorded yet.")
+
+st.markdown("Debug: raw instrument master / search response")
+if st.session_state.get("search_raw"):
+    with st.expander("Raw search response (first 50 rows)"):
+        st.write(st.session_state["search_raw"].get("data", [])[:50])
 
 else:
     st.info("Please login to use strategy and expiry fetch.")

@@ -4,3 +4,5 @@ python-dotenv
 pyotp
 requests
 pandas
+logzero
+websocket-client
