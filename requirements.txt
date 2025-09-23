@@ -6,3 +6,4 @@ requests
 pandas
 logzero
 websocket-client
+retrying
