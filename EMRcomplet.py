@@ -339,8 +339,8 @@ class TradingBot:
                                 trade_type = "CE" if signal['signal'] == "CALL" else "PE"
                                 token, symbol = find_option_token_from_list(self.instrument_list, index_name, atm, self.params['expiry'], trade_type)
                                 entry_price = get_option_ltp(self.obj, config['exchange'], symbol, token)
-                                
-                                if entry_price:
+                                min_option_price = 20.0  # न्यूनतम ऑप्शन मूल्य ₹20
+                                if entry_price and entry_price > min_option_price: 
                                     qty = max(config['lot_size'], int((self.params['capital'] * self.params['risk_per_trade']) / self.params['sl_offset']) // config['lot_size'] * config['lot_size'])
                                     
                                     order_id = place_order(self.obj, symbol, token, qty, config['exchange'], "BUY", is_paper_trading=is_paper)
@@ -547,4 +547,5 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 ax.plot(pd.to_datetime(trades_df['date']), trades_df['cum_pnl'])
                 ax.set_xlabel('तिथि'); ax.set_ylabel('कुल PnL'); fig.autofmt_xdate()
                 st.pyplot(fig)
+
                 
