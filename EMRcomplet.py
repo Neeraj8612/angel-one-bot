@@ -81,6 +81,9 @@ def find_index_futures_token(instrument_list, index_name, exchange):
     today = datetime.now().date()
     for item in instrument_list:
         if (item.get("instrumenttype") == "FUTIDX" and item.get("name") == instrument_name and item.get("exch_seg") == exchange):
+            # यह जाँच सुनिश्चित करती है कि NIFTY के लिए NIFTYNXT50 का टोकन न चुना जाए
+            if instrument_name == "NIFTY" and "NIFTYNXT50" in item.get("symbol", ""):
+                continue # यह NIFTYNXT50 है, इसे छोड़ दें और अगले आइटम पर जाएं
             try:
                 expiry_date = datetime.strptime(item["expiry"], '%d%b%Y').date()
                 if expiry_date >= today:
@@ -559,6 +562,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
