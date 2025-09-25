@@ -458,10 +458,10 @@ with c3:
     st.subheader("SL, TP और ट्रेलिंग")
     # <<<--- FIXED: All trailing options are now back ---<<<
     st.session_state.strategy_params['sl_offset'] = st.number_input("प्रारंभिक SL ऑफ़सेट (₹)", 1.0, value=20.0, step=0.5)
-    st.session_state.strategy_params['tp_offset'] = st.number_input("TP ऑफ़सेट (₹)", 1.0, value=40.0, step=0.5)
-    st.session_state.strategy_params['start_trailing_after_points'] = st.number_input("इसके बाद ट्रेलिंग शुरू करें (पॉइंट्स)", 0.0, value=15.0, step=1.0)
+    st.session_state.strategy_params['tp_offset'] = st.number_input("TP ऑफ़सेट (₹)", 1.0, value=20.0, step=0.5)
+    st.session_state.strategy_params['start_trailing_after_points'] = st.number_input("इसके बाद ट्रेलिंग शुरू करें (पॉइंट्स)", 0.0, value=0.0, step=1.0)
     st.session_state.strategy_params['trailing_sl_gap_points'] = st.number_input("ट्रेलिंग SL गैप (पॉइंट्स)", 0.0, value=20.0, step=1.0)
-    st.session_state.strategy_params['exit_on_points_gain'] = st.number_input("इतने पॉइंट्स लाभ पर बाहर निकलें", 0.0, value=50.0, step=1.0)
+    st.session_state.strategy_params['exit_on_points_gain'] = st.number_input("इतने पॉइंट्स लाभ पर बाहर निकलें", 0.0, value=0.0, step=1.0)
     st.session_state.strategy_params['max_daily_loss'] = st.number_input("मैक्स डेली लॉस (₹) (Live Only)", value=10000)
     
 st.header("3) एक्सपायरी चुनें")
@@ -559,4 +559,5 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
