@@ -555,9 +555,10 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 trades_df['cum_pnl'] = trades_df['net_pnl'].cumsum()
                 fig, ax = plt.subplots()
                 ax.plot(pd.to_datetime(trades_df['date']), trades_df['cum_pnl'])
-                ax.set_xlabel('तिथि'); ax.set_ylabel('कुल PnL'); fig.autofmt_xdate()
+                ax.set_xlabel('Date'); ax.set_ylabel('Total PnL'); fig.autofmt_xdate()
                 st.pyplot(fig)
 
                 
+
 
 
