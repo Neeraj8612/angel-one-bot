@@ -302,23 +302,23 @@ class TradingBot:
                 self.active_trade = None
                 self.save_state()
             
-    def run_strategy_loop(self):
-        if not self.obj and not self.login(): self.running = False; return
-        if not self.instrument_list: self.status, self.running = "Error: Instrument list not loaded.", False; return
+ def run_strategy_loop(self):
+    if not self.obj and not self.login(): self.running = False; return
+    if not self.instrument_list: self.status, self.running = "Error: Instrument list not loaded.", False; return
     
     indices_to_monitor = self.params.get('indices_to_monitor', [])
     is_paper = self.params.get('is_paper_trading', False)
     trade_direction = self.params.get('trade_direction', 'दोनों (CALL और PUT)')
     min_option_price = self.params.get('min_option_price', 20.0)
 
-   while self.running:
+    while self.running:
         now = datetime.now()
-             try:
-                 with self.lock:
-                     if self.active_trade:
+        try:
+            with self.lock:
+                if self.active_trade:
                     self.monitor_active_trade()
-                      elif dt_time(9, 30) <= now.time() < dt_time(15, 20):
-                      for index_name in indices_to_monitor:
+                elif dt_time(9, 30) <= now.time() < dt_time(15, 20):
+                    for index_name in indices_to_monitor:
                         self.status = f"Checking {index_name}..."
                         config = INDEX_CONFIG[index_name]
                         futures_token = find_index_futures_token(self.instrument_list, index_name, config['exchange'])
@@ -590,6 +590,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
