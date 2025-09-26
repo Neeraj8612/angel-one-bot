@@ -431,7 +431,23 @@ with c2:
         if st.button("🛑 बॉट रोकें"): bot.stop(); st.rerun()
 with c3:
     st.markdown(f"**बॉट स्थिति:** <span style='color:{'green' if bot.running else 'red'};'>{bot.status}</span>", unsafe_allow_html=True)
-
+ # <<<--- यहाँ से नया कोड ब्लॉक जोड़ें ---<<<
+    if bot.running and bot.last_checked:
+        try:
+            last_check_time = datetime.strptime(bot.last_checked, "%Y-%m-%d %H:%M:%S")
+            time_diff = (datetime.now() - last_check_time).total_seconds()
+            
+            color = "green"
+            if time_diff > 60:
+                color = "red"
+                st.warning("बॉट अटक गया है! कृपया रीसेट करें।")
+            elif time_diff > 30:
+                color = "orange"
+                
+            st.markdown(f"**आखिरी जाँच:** <span style='color:{color};'>{bot.last_checked} ({int(time_diff)}s ago)</span>", unsafe_allow_html=True)
+        except Exception as e:
+            logging.error(f"Error rendering heartbeat: {e}")
+    # <<<--- नया कोड ब्लॉक यहाँ खत्म होता है ---<<<
 pnl_c1, pnl_c2 = st.columns(2)
 pnl_c1.metric("आज का लाइव PnL", f"₹ {bot.daily_pnl:,.2f}")
 pnl_c2.metric("आज का पेपर PnL", f"₹ {bot.paper_pnl:,.2f}")
@@ -566,6 +582,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
