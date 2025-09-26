@@ -303,8 +303,12 @@ class TradingBot:
                 self.save_state()
             
      def run_strategy_loop(self):
-         if not self.obj and not self.login(): self.running = False; return
-         if not self.instrument_list: self.status, self.running = "Error: Instrument list not loaded.", False; return
+    if not self.obj and not self.login(): 
+        self.running = False
+        return
+    if not self.instrument_list: 
+        self.status, self.running = "Error: Instrument list not loaded.", False
+        return
     
     indices_to_monitor = self.params.get('indices_to_monitor', [])
     is_paper = self.params.get('is_paper_trading', False)
@@ -322,10 +326,12 @@ class TradingBot:
                         self.status = f"Checking {index_name}..."
                         config = INDEX_CONFIG[index_name]
                         futures_token = find_index_futures_token(self.instrument_list, index_name, config['exchange'])
-                        if not futures_token: continue
+                        if not futures_token: 
+                            continue
                         
                         df = try_fetch_candles(self.obj, futures_token, self.params['interval'], 1, config['exchange'])
-                        if df is None: continue
+                        if df is None: 
+                            continue
                         
                         signals = detect_strategy_signals(df, self.params)
 
@@ -361,7 +367,8 @@ class TradingBot:
                             else:
                                 logging.warning(f"Trade skipped for {symbol}. Entry price {entry_price} is below minimum {min_option_price}.")
                     
-                    if not self.active_trade: self.status = "Monitoring..."
+                    if not self.active_trade: 
+                        self.status = "Monitoring..."
         
         except Exception as e:
             self.status = f"Error in loop: {e}"
@@ -369,7 +376,6 @@ class TradingBot:
         
         self.last_checked = now.strftime("%Y-%m-%d %H:%M:%S")
         time.sleep(10)
-
 
 
 # --- Streamlit UI ---
@@ -590,6 +596,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
