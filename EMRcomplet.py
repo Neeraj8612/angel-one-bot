@@ -358,9 +358,13 @@ class TradingBot:
                                         self.status = f"Trade {'Simulated' if is_paper else 'Placed'} for {symbol}."
                                         break
                         if not self.active_trade: self.status = "Monitoring..."
-            except Exception as e:
+                        except Exception as e:
                 self.status = f"Error in loop: {e}"
+            
+            # <<<--- यह लाइन जोड़ें ---<<<
+            self.last_checked = now.strftime("%Y-%m-%d %H:%M:%S")
             time.sleep(10)
+
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Trading Bot Dashboard", layout="wide")
@@ -562,6 +566,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
