@@ -200,13 +200,13 @@ def place_order(obj, symbol, token, qty, exchange, transaction_type, is_paper_tr
 
 class TradingBot:
     def __init__(self):
-                self.obj, self.running, self.thread, self.status, self.active_trade, self.params, self.instrument_list, self.last_checked = [None]*8
-        self.status = "Idle"
-        self.lock = Lock()
-        self.daily_pnl = 0
-        self.paper_pnl = 0
-        self.paper_trades_log = []
-        self.load_state()
+          self.obj, self.running, self.thread, self.status, self.active_trade, self.params, self.instrument_list, self.last_checked = [None]*8
+          self.status = "Idle"
+          self.lock = Lock()
+          self.daily_pnl = 0
+          self.paper_pnl = 0
+          self.paper_trades_log = []
+          self.load_state()
 
     def login(self):
         self.status = "Logging in..."
@@ -582,6 +582,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
