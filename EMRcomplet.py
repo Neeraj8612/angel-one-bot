@@ -313,7 +313,7 @@ class TradingBot:
 
     while self.running:
         now = datetime.now()
-        try: # <<<--- 'try' यहाँ शुरू होता है
+        try:
             with self.lock:
                 if self.active_trade:
                     self.monitor_active_trade()
@@ -363,10 +363,9 @@ class TradingBot:
                     
                     if not self.active_trade: self.status = "Monitoring..."
         
-        # <<<--- 'except' को 'try' के ठीक नीचे, एक ही सीध में होना चाहिए ---<<<
         except Exception as e:
             self.status = f"Error in loop: {e}"
-            logging.error(f"Critical error in strategy loop: {e}", exc_info=True) # Log the full traceback
+            logging.error(f"Critical error in strategy loop: {e}", exc_info=True)
         
         self.last_checked = now.strftime("%Y-%m-%d %H:%M:%S")
         time.sleep(10)
@@ -591,6 +590,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
