@@ -311,7 +311,7 @@ class TradingBot:
     trade_direction = self.params.get('trade_direction', 'दोनों (CALL और PUT)')
     min_option_price = self.params.get('min_option_price', 20.0)
 
-         while self.running:
+   while self.running:
         now = datetime.now()
              try:
                  with self.lock:
@@ -590,6 +590,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
