@@ -303,67 +303,74 @@ class TradingBot:
                 self.save_state()
             
     def run_strategy_loop(self):
-        if not self.obj and not self.login(): self.running = False; return
-        if not self.instrument_list: self.status, self.running = "Error: Instrument list not loaded.", False; return
-        
-        indices_to_monitor = self.params.get('indices_to_monitor', [])
-        is_paper = self.params.get('is_paper_trading', False)
-        trade_direction = self.params.get('trade_direction', 'दोनों (CALL और PUT)')
+    if not self.obj and not self.login(): self.running = False; return
+    if not self.instrument_list: self.status, self.running = "Error: Instrument list not loaded.", False; return
+    
+    indices_to_monitor = self.params.get('indices_to_monitor', [])
+    is_paper = self.params.get('is_paper_trading', False)
+    trade_direction = self.params.get('trade_direction', 'दोनों (CALL और PUT)')
+    min_option_price = self.params.get('min_option_price', 20.0)
 
-        while self.running:
-            now = datetime.now()
-            try:
-                with self.lock:
-                    if self.active_trade:
-                        self.monitor_active_trade()
-                    elif dt_time(9, 30) <= now.time() < dt_time(15, 20):
-                        for index_name in indices_to_monitor:
-                            self.status = f"Checking {index_name}..."
-                            config = INDEX_CONFIG[index_name]
-                            futures_token = find_index_futures_token(self.instrument_list, index_name, config['exchange'])
-                            if not futures_token: continue
+    while self.running:
+        now = datetime.now()
+        try: # <<<--- 'try' यहाँ शुरू होता है
+            with self.lock:
+                if self.active_trade:
+                    self.monitor_active_trade()
+                elif dt_time(9, 30) <= now.time() < dt_time(15, 20):
+                    for index_name in indices_to_monitor:
+                        self.status = f"Checking {index_name}..."
+                        config = INDEX_CONFIG[index_name]
+                        futures_token = find_index_futures_token(self.instrument_list, index_name, config['exchange'])
+                        if not futures_token: continue
+                        
+                        df = try_fetch_candles(self.obj, futures_token, self.params['interval'], 1, config['exchange'])
+                        if df is None: continue
+                        
+                        signals = detect_strategy_signals(df, self.params)
+
+                        if trade_direction == 'केवल CALL':
+                            signals = [s for s in signals if s['signal'] == 'CALL']
+                        elif trade_direction == 'केवल PUT':
+                            signals = [s for s in signals if s['signal'] == 'PUT']
+
+                        if signals:
+                            signal = signals[-1]
+                            self.status = f"{signal['signal']} Signal in {index_name}! Processing..."
                             
-                            df = try_fetch_candles(self.obj, futures_token, self.params['interval'], 1, config['exchange'])
-                            if df is None: continue
+                            spot = signal['entry_price']
+                            atm = round(spot / config['strike_step']) * config['strike_step']
+                            trade_type = "CE" if signal['signal'] == "CALL" else "PE"
+                            token, symbol = find_option_token_from_list(self.instrument_list, index_name, atm, self.params['expiry'], trade_type)
+                            entry_price = get_option_ltp(self.obj, config['exchange'], symbol, token)
                             
-                            signals = detect_strategy_signals(df, self.params)
-
-                            if trade_direction == 'केवल CALL':
-                                signals = [s for s in signals if s['signal'] == 'CALL']
-                            elif trade_direction == 'केवल PUT':
-                                signals = [s for s in signals if s['signal'] == 'PUT']
-
-                            if signals:
-                                signal = signals[-1]
-                                self.status = f"{signal['signal']} Signal in {index_name}! Processing..."
+                            if entry_price and entry_price > min_option_price: 
+                                qty = max(config['lot_size'], int((self.params['capital'] * self.params['risk_per_trade']) / self.params['sl_offset']) // config['lot_size'] * config['lot_size'])
                                 
-                                spot = signal['entry_price']
-                                atm = round(spot / config['strike_step']) * config['strike_step']
-                                trade_type = "CE" if signal['signal'] == "CALL" else "PE"
-                                token, symbol = find_option_token_from_list(self.instrument_list, index_name, atm, self.params['expiry'], trade_type)
-                                entry_price = get_option_ltp(self.obj, config['exchange'], symbol, token)
-                                min_option_price = 20.0  # न्यूनतम ऑप्शन मूल्य ₹20
-                                if entry_price and entry_price > min_option_price: 
-                                    qty = max(config['lot_size'], int((self.params['capital'] * self.params['risk_per_trade']) / self.params['sl_offset']) // config['lot_size'] * config['lot_size'])
-                                    
-                                    order_id = place_order(self.obj, symbol, token, qty, config['exchange'], "BUY", is_paper_trading=is_paper)
-                                    if order_id:
-                                        self.active_trade = {
-                                            "symbol": symbol, "token": token, "qty": qty, "exchange": config['exchange'], "index": index_name,
-                                            "entry_price": entry_price, "sl": entry_price - self.params['sl_offset'],
-                                            "tp": entry_price + self.params['tp_offset'], "high_water_mark": entry_price,
-                                            "is_paper_trading": is_paper, "entry_time": datetime.now().strftime('%H:%M:%S')
-                                        }
-                                        self.save_state()
-                                        self.status = f"Trade {'Simulated' if is_paper else 'Placed'} for {symbol}."
-                                        break
-                        if not self.active_trade: self.status = "Monitoring..."
-                        except Exception as e:
-                self.status = f"Error in loop: {e}"
-            
-            # <<<--- यह लाइन जोड़ें ---<<<
-            self.last_checked = now.strftime("%Y-%m-%d %H:%M:%S")
-            time.sleep(10)
+                                order_id = place_order(self.obj, symbol, token, qty, config['exchange'], "BUY", is_paper_trading=is_paper)
+                                if order_id:
+                                    self.active_trade = {
+                                        "symbol": symbol, "token": token, "qty": qty, "exchange": config['exchange'], "index": index_name,
+                                        "entry_price": entry_price, "sl": entry_price - self.params['sl_offset'],
+                                        "tp": entry_price + self.params['tp_offset'], "high_water_mark": entry_price,
+                                        "is_paper_trading": is_paper, "entry_time": datetime.now().strftime('%H:%M:%S')
+                                    }
+                                    self.save_state()
+                                    self.status = f"Trade {'Simulated' if is_paper else 'Placed'} for {symbol}."
+                                    break
+                            else:
+                                logging.warning(f"Trade skipped for {symbol}. Entry price {entry_price} is below minimum {min_option_price}.")
+                    
+                    if not self.active_trade: self.status = "Monitoring..."
+        
+        # <<<--- 'except' को 'try' के ठीक नीचे, एक ही सीध में होना चाहिए ---<<<
+        except Exception as e:
+            self.status = f"Error in loop: {e}"
+            logging.error(f"Critical error in strategy loop: {e}", exc_info=True) # Log the full traceback
+        
+        self.last_checked = now.strftime("%Y-%m-%d %H:%M:%S")
+        time.sleep(10)
+
 
 
 # --- Streamlit UI ---
@@ -584,6 +591,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं"):
                 st.pyplot(fig)
 
                 
+
 
 
 
