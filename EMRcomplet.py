@@ -1027,7 +1027,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं (Trailing S
                 ax.plot(pd.to_datetime(trades_df['date']), trades_df['cum_pnl'], linewidth=2)
                 ax.set_xlabel('Date', fontsize=12)
                 ax.set_ylabel('Total PnL (₹)', fontsize=12)
-                ax.set_title('Trailing SL के साथ इक्विटी कर्व', fontsize=14)
+                ax.set_title('Trailing SL ke sath graph', fontsize=14)
                 ax.grid(True, alpha=0.3)
                 fig.autofmt_xdate()
                 st.pyplot(fig)
@@ -1044,4 +1044,5 @@ st.info("""
 - **बॉट हेल्थ मॉनिटर** रियल-टाइम स्टेटस दिखाएगा
 - **Timezone Issues** पूरी तरह फिक्स हो गए हैं
 """)
+
 
