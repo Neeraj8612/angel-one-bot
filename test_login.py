@@ -1087,21 +1087,3 @@ st.markdown("---")
 st.success("**v2.0 New Features:** 🟢 Normal | 🟠 Slow | 🔴 Frozen | ✅ Trailing SL Backtesting | 🎯 Real-time Monitoring | 🌏 Timezone Fixed")
 
 # Footer
-st.markdown("---")
-st.markdown("### 📝 Note:")
-st.info("""
-- **Backtesting** now works with Trailing Stop Loss
-- **Live Trading** trades only on current candle
-- **Bot Health Monitor** shows real-time status
-- **Timezone issues** completely fixed
-- **Auto-refresh** keeps data fresh on mobile
-""")
-
-# Mobile optimization
-st.sidebar.markdown("---")
-st.sidebar.info("""
-**Mobile Users:**
-- Auto-refresh keeps data updated
-- Use 'Refresh Now' if data seems stale
-- IST timezone ensures accurate timing
-""")
