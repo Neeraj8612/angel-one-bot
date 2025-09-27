@@ -43,7 +43,7 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 # --- Central Index Configuration ---
 INDEX_CONFIG = {
     "NIFTY": {"lot_size": 75, "exchange": "NFO", "strike_step": 50, "instrument_name": "NIFTY"},
-    "BANKNIFTY": {"lot_size": 35, "exchange": "NFO", "strike_step": 100, "instrument_name": "BANKNIFTY"},
+    "BANKNIFTY": {"lot_size": 35, "exchange": "NFO", "strike_step": 100, "instrument_name": "NIFTY BANK"},
     "FINNIFTY": {"lot_size": 65, "exchange": "NFO", "strike_step": 50, "instrument_name": "NIFTY FIN SERVICE"},
     "SENSEX": {"lot_size": 20, "exchange": "BFO", "strike_step": 100, "instrument_name": "SENSEX"}
 }
@@ -1027,7 +1027,7 @@ if st.button("▶ अभी बैकटेस्ट चलाएं (Trailing S
                 ax.plot(pd.to_datetime(trades_df['date']), trades_df['cum_pnl'], linewidth=2)
                 ax.set_xlabel('Date', fontsize=12)
                 ax.set_ylabel('Total PnL (₹)', fontsize=12)
-                ax.set_title('Trailing SL ke sath graph', fontsize=14)
+                ax.set_title('Trailing SL carv graph', fontsize=14)
                 ax.grid(True, alpha=0.3)
                 fig.autofmt_xdate()
                 st.pyplot(fig)
@@ -1043,6 +1043,3 @@ st.info("""
 - **Live Trading** करंट कैंडल पर ही ट्रेड लेगा
 - **बॉट हेल्थ मॉनिटर** रियल-टाइम स्टेटस दिखाएगा
 - **Timezone Issues** पूरी तरह फिक्स हो गए हैं
-""")
-
-
