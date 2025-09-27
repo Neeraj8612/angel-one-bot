@@ -8,4 +8,4 @@ logzero
 websocket-client
 retrying
 matplotlib
-pytz==2023.3
+pytz
