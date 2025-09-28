@@ -19,7 +19,6 @@ from email.mime.multipart import MIMEMultipart
 from threading import Lock
 import pytz
 import warnings
-
 warnings.filterwarnings('ignore')
 
 # --- Global Configuration & Setup ---
@@ -32,12 +31,11 @@ IST = pytz.timezone('Asia/Kolkata')
 INSTRUMENT_CACHE_FILE = "instrument_list.json.gz"
 STATE_DB = "bot_state.db"
 
-# --- Try to import SmartApi and WebSocket ---
+# --- Try to import SmartApi ---
 try:
     from SmartApi import SmartConnect
-    from smartapi_websocket import SmartStreamClient
 except ImportError:
-    st.error("SmartApi or smartapi_websocket library not found. Please install them.")
+    st.error("SmartApi library not found. Please install it using 'pip install smartapi-python'")
     # We don't stop here to allow UI to load, but login will fail.
 
 # --- Load Environment Variables ---
@@ -89,14 +87,14 @@ def fetch_and_cache_instrument_list():
             file_mod_time = datetime.fromtimestamp(os.path.getmtime(INSTRUMENT_CACHE_FILE))
             current_time_naive = make_naive(get_ist_time())
             if current_time_naive - file_mod_time < timedelta(hours=24):
-                with gzip.open(INSTRUMENT_CACHE_FILE, 'rt', encoding='utf-8') as f:
+                with gzip.open(INSTRUMENT_CACHE_FILE, 'rt', encoding='utf-8') as f: 
                     return json.load(f)
         logging.info("Downloading fresh instrument list.")
         url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
         response = requests.get(url)
         response.raise_for_status()
         instrument_data = response.json()
-        with gzip.open(INSTRUMENT_CACHE_FILE, 'wt', encoding='utf-8') as f:
+        with gzip.open(INSTRUMENT_CACHE_FILE, 'wt', encoding='utf-8') as f: 
             json.dump(instrument_data, f)
         return instrument_data
     except Exception as e:
@@ -107,13 +105,13 @@ def find_index_futures_token(instrument_list, index_name, exchange):
     if not instrument_list: return None
     config = INDEX_CONFIG[index_name]
     instrument_name = config.get("instrument_name", index_name)
-
-    # Logic to find the nearest month's future token (Simplified for backtest token)
+    
+    # Logic to find the nearest month's future token
     futures = []
     today = get_ist_time().date()
     for item in instrument_list:
-        if (item.get("instrumenttype") == "FUTIDX" and
-            item.get("name") == instrument_name and
+        if (item.get("instrumenttype") == "FUTIDX" and 
+            item.get("name") == instrument_name and 
             item.get("exch_seg") == exchange and
             "NIFTYNXT50" not in item.get("symbol", "") and
             "NEXT" not in item.get("symbol", "").upper()):
@@ -122,7 +120,7 @@ def find_index_futures_token(instrument_list, index_name, exchange):
                 if expiry_date >= today:
                     futures.append((expiry_date, item))
             except (ValueError, KeyError): continue
-
+                
     if not futures: return None
     futures.sort(key=lambda x: x[0])
     return futures[0][1].get("token")
@@ -132,17 +130,17 @@ def find_option_token_from_list(instrument_list, index_name, strike, expiry, opt
     config = INDEX_CONFIG[index_name]
     instrument_name = config.get("instrument_name", index_name)
     expiry_fmt = datetime.strptime(expiry, "%Y-%m-%d").strftime("%d%b%Y").upper()
-
+    
     for item in instrument_list:
-        if (item.get("name") == instrument_name and
+        if (item.get("name") == instrument_name and 
             item.get("exch_seg") == config['exchange'] and
-            item.get("instrumenttype") == "OPTIDX" and
+            item.get("instrumenttype") == "OPTIDX" and 
             item.get("strike") and
-            float(item.get("strike")) / 100 == float(strike) and
+            float(item.get("strike")) / 100 == float(strike) and 
             item.get("expiry") == expiry_fmt and
             item.get("symbol", "").endswith(option_cepe)):
             return item.get("token"), item.get("symbol")
-
+            
     raise RuntimeError(f"Could not find {option_cepe} for strike {strike} and expiry {expiry}.")
 
 @retrying.retry(wait_fixed=2000, stop_max_attempt_number=3)
@@ -150,10 +148,10 @@ def try_fetch_candles(obj, symbol_token, interval, days_back, exchange):
     to_dt, from_dt = get_ist_time(), get_ist_time() - timedelta(days=days_back)
     imap = {"1min": "ONE_MINUTE", "5min": "FIVE_MINUTE", "15min": "FIFTEEN_MINUTE"}
     params = {
-        "exchange": exchange,
-        "symboltoken": str(symbol_token),
+        "exchange": exchange, 
+        "symboltoken": str(symbol_token), 
         "interval": imap.get(interval),
-        "fromdate": make_naive(from_dt).strftime("%Y-%m-%d %H:%M"),
+        "fromdate": make_naive(from_dt).strftime("%Y-%m-%d %H:%M"), 
         "todate": make_naive(to_dt).strftime("%Y-%m-%d %H:%M")
     }
     try:
@@ -168,8 +166,7 @@ def try_fetch_candles(obj, symbol_token, interval, days_back, exchange):
         logging.error(f"Error fetching candles for {symbol_token}: {e}")
         return None
 
-# --- Indicator Calculations (Remain the same) ---
-def calculate_ema(df, period):
+def calculate_ema(df, period): 
     return df['close'].ewm(span=period, adjust=False).mean()
 
 def calculate_rsi(df, period):
@@ -189,61 +186,70 @@ def calculate_macd(df, short_window=12, long_window=26, signal_window=9):
 def detect_strategy_signals(df, params, is_backtest=False):
     signals = []
     if df is None or len(df) < 26: return signals
-
+        
     df['ema'] = calculate_ema(df, period=params['ema_period'])
     df['rsi'] = calculate_rsi(df, period=params['rsi_period'])
     df = calculate_macd(df)
-
+    
     # Check for signals only in the last few candles (for live trading) or all (for backtest)
     start_index = 1 if is_backtest else max(1, len(df) - 2)
-
+    
     for i in range(start_index, len(df)):
         current_candle, prev_candle = df.iloc[i], df.iloc[i - 1]
-
-        if not (dt_time(9, 20) <= current_candle['timestamp'].time() < dt_time(15, 20)):
+        
+        if not (dt_time(9, 20) <= current_candle['timestamp'].time() < dt_time(15, 20)): 
             continue
-
+        
         is_ema_bullish_cross = prev_candle['close'] < prev_candle['ema'] and current_candle['close'] > current_candle['ema']
         is_macd_bullish_cross = prev_candle['macd'] < prev_candle['macd_signal'] and current_candle['macd'] > current_candle['macd_signal']
         is_rsi_bullish = current_candle['rsi'] > 50
-
+        
         if is_ema_bullish_cross and is_macd_bullish_cross and is_rsi_bullish:
             signals.append({
-                "signal": "CALL",
-                "entry_price": float(current_candle['close']),
-                "timestamp": current_candle['timestamp'],
+                "signal": "CALL", 
+                "entry_price": float(current_candle['close']), 
+                "timestamp": current_candle['timestamp'], 
                 "entry_index": i
             })
-
+        
         is_ema_bearish_cross = prev_candle['close'] > prev_candle['ema'] and current_candle['close'] < current_candle['ema']
         is_macd_bearish_cross = prev_candle['macd'] > prev_candle['macd_signal'] and current_candle['macd'] < current_candle['macd_signal']
         is_rsi_bearish = current_candle['rsi'] < 50
-
+        
         if is_ema_bearish_cross and is_macd_bearish_cross and is_rsi_bearish:
             signals.append({
-                "signal": "PUT",
-                "entry_price": float(current_candle['close']),
-                "timestamp": current_candle['timestamp'],
+                "signal": "PUT", 
+                "entry_price": float(current_candle['close']), 
+                "timestamp": current_candle['timestamp'], 
                 "entry_index": i
             })
-
+    
     return signals
+
+@retrying.retry(wait_fixed=2000, stop_max_attempt_number=3)
+def get_option_ltp(obj, exchange, tradingsymbol, symboltoken):
+    try:
+        r = obj.ltpData(exchange=exchange, tradingsymbol=tradingsymbol, symboltoken=str(symboltoken))
+        if r and r.get("data") and "ltp" in r["data"]: 
+            return float(r["data"]["ltp"])
+    except Exception: 
+        return None
 
 @retrying.retry(wait_fixed=2000, stop_max_attempt_number=3)
 def place_order(obj, symbol, token, qty, exchange, transaction_type, is_paper_trading=False):
     if is_paper_trading:
         logging.info(f"PAPER TRADING: Simulating {transaction_type} order for {symbol} of {qty} quantity.")
         return f"PAPER_{int(time.time())}"
-
+    
     params = {
-        "variety": "NORMAL",
-        "tradingsymbol": symbol,
-        "symboltoken": token,
-        "transactiontype": transaction_type,
-        "exchange": exchange,
-        "ordertype": "MARKET",
-        "producttype": "INTRADAY",
-        "duration": "DAY",
+        "variety": "NORMAL", 
+        "tradingsymbol": symbol, 
+        "symboltoken": token, 
+        "transactiontype": transaction_type, 
+        "exchange": exchange, 
+        "ordertype": "MARKET", 
+        "producttype": "INTRADAY", 
+        "duration": "DAY", 
         "quantity": qty
     }
     try:
@@ -260,28 +266,27 @@ def place_order(obj, symbol, token, qty, exchange, transaction_type, is_paper_tr
 
 class MarketCalendar:
     def __init__(self):
-        # Placeholder for 2024 holidays (should be dynamically loaded in a production bot)
         self.holidays_2024 = [
             '2024-01-26', '2024-03-08', '2024-03-25', '2024-03-29',
             '2024-04-11', '2024-04-17', '2024-05-01', '2024-06-17',
             '2024-07-17', '2024-08-15', '2024-10-02', '2024-11-01',
             '2024-11-15', '2024-12-25'
         ]
-
+    
     def is_trading_day(self, date=None):
         if date is None:
             date = get_ist_time().date()
         if date.weekday() >= 5: return False # Weekend check
         if date.strftime('%Y-%m-%d') in self.holidays_2024: return False # Holiday check
         return True
-
+    
     def is_trading_time(self):
         if not self.is_trading_day(): return False
         now = get_ist_time()
         market_start = dt_time(9, 15)
         market_end = dt_time(15, 30)
         return market_start <= now.time() <= market_end
-
+    
     def next_trading_day(self):
         day = get_ist_time() + timedelta(days=1)
         while not self.is_trading_day(day.date()):
@@ -293,27 +298,27 @@ class PositionSizer:
         self.min_lots = 1
         self.max_lots = 10
         self.max_capital_risk = 0.1
-
+    
     def calculate_position_size(self, capital, risk_per_trade, sl_points, lot_size, volatility_factor=1.0):
         risk_amount = capital * risk_per_trade
         risk_amount = risk_amount / max(0.5, min(2.0, volatility_factor))
         risk_per_lot = sl_points * lot_size
-
+        
         if risk_per_lot <= 0:
             return self.min_lots * lot_size
-
+        
         optimal_lots = risk_amount / risk_per_lot
         max_lots_based_on_capital = int((capital * self.max_capital_risk) / risk_per_lot)
         max_allowed_lots = min(self.max_lots, max_lots_based_on_capital)
         final_lots = max(self.min_lots, min(max_allowed_lots, int(optimal_lots)))
-
+        
         return final_lots * lot_size
 
 class TradeJournal:
     def __init__(self, db_path="trade_journal.db"):
         self.db_path = db_path
         self.init_database()
-
+    
     def init_database(self):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -348,12 +353,12 @@ class TradeJournal:
         ''')
         conn.commit()
         conn.close()
-
+    
     def log_trade(self, trade_data):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         c.execute('''
-            INSERT INTO trades
+            INSERT INTO trades 
             (timestamp, symbol, trade_type, quantity, entry_price, exit_price, exit_reason, pnl, strategy_params, market_condition)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
@@ -370,13 +375,13 @@ class TradeJournal:
         ))
         conn.commit()
         conn.close()
-
+    
     def get_performance_report(self):
         conn = sqlite3.connect(self.db_path)
         metrics = {}
         total_trades = pd.read_sql('SELECT COUNT(*) as count FROM trades', conn).iloc[0]['count']
         metrics['total_trades'] = total_trades
-
+        
         if total_trades > 0:
             winning_trades = pd.read_sql('SELECT COUNT(*) as count FROM trades WHERE pnl > 0', conn).iloc[0]['count']
             metrics['win_rate'] = (winning_trades / total_trades) * 100
@@ -386,7 +391,7 @@ class TradeJournal:
                 metrics['avg_win'] = pnl_data[pnl_data['pnl'] > 0]['pnl'].mean() if winning_trades > 0 else 0
                 metrics['avg_loss'] = pnl_data[pnl_data['pnl'] < 0]['pnl'].mean() if (total_trades - winning_trades) > 0 else 0
                 loss_trades = total_trades - winning_trades
-
+                
                 # Calculate Profit Factor safely
                 if loss_trades > 0 and metrics['avg_loss'] != 0:
                     gross_profit = metrics['avg_win'] * winning_trades
@@ -394,63 +399,76 @@ class TradeJournal:
                     metrics['profit_factor'] = gross_profit / gross_loss
                 else:
                     metrics['profit_factor'] = 0 if winning_trades == 0 else float('inf')
-
+            
         conn.close()
         return metrics
 
 class AlertSystem:
-    def __init__(self, sender, password, receiver):
-        self.email_sender = sender
-        self.email_password = password
-        self.email_receiver = receiver
-
+    def __init__(self):
+        # Using global environment variables here
+        self.email_sender = EMAIL_SENDER
+        self.email_password = EMAIL_PASSWORD
+        self.email_receiver = EMAIL_RECEIVER
+    
     def send_email_alert(self, subject, message):
         """Send email alert"""
+        # Ensure all credentials exist before attempting connection
         if not all([self.email_sender, self.email_password, self.email_receiver]):
             logging.warning("Email credentials missing. Skipping email alert.")
             return False
-
+        
         try:
             msg = MIMEMultipart()
             msg['From'] = self.email_sender
             msg['To'] = self.email_receiver
             msg['Subject'] = f"Trading Bot Alert: {subject}"
             msg.attach(MIMEText(message, 'plain'))
-
+            
+            # Use 'with' statement for safer connection handling
             with smtplib.SMTP('smtp.gmail.com', 587) as server:
                 server.starttls()
                 server.login(self.email_sender, self.email_password)
                 text = msg.as_string()
                 server.sendmail(self.email_sender, self.email_receiver, text)
-
+            
             logging.info(f"Email alert sent: {subject}")
             return True
         except Exception as e:
             logging.error(f"Failed to send email alert: {e}")
             return False
-
+    
     def send_trade_alert(self, alert_type, trade_data=None):
         """Send trade-specific alerts with None-safe message formatting."""
-
+        
+        # Safe message formatting for trade_executed to prevent AttributeError on None trade_data
         if alert_type == 'trade_executed':
-            message = (f"Trade Executed: {trade_data.get('symbol', 'N/A')} | Price: {trade_data.get('entry_price', 'N/A')} | Qty: {trade_data.get('quantity', 'N/A')}"
+            message = (f"Trade Executed: {trade_data.get('symbol', 'N/A')} | Price: {trade_data.get('entry_price', 'N/A')} | Qty: {trade_data.get('quantity', 'N/A')}" 
                        if trade_data else "Trade Executed: Details not available")
             subject = 'Trade Executed'
+        
+        # Safe message formatting for sl_hit
         elif alert_type == 'sl_hit':
-            message = (f"SL Hit: {trade_data.get('symbol', 'N/A')} | PnL: ₹{trade_data.get('pnl', 0):.2f}"
+            message = (f"SL Hit: {trade_data.get('symbol', 'N/A')} | PnL: ₹{trade_data.get('pnl', 0):.2f}" 
                        if trade_data else "Stop Loss Hit: Details not available")
             subject = 'Stop Loss Hit'
+
+        # Safe message formatting for tp_hit
         elif alert_type == 'tp_hit':
-            message = (f"Target Hit: {trade_data.get('symbol', 'N/A')} | PnL: ₹{trade_data.get('pnl', 0):.2f}"
+            message = (f"Target Hit: {trade_data.get('symbol', 'N/A')} | PnL: ₹{trade_data.get('pnl', 0):.2f}" 
                        if trade_data else "Target Achieved: Details not available")
             subject = 'Target Achieved'
+        
+        # Bot system alerts
         elif alert_type == 'bot_started':
             message, subject = "Trading Bot has started successfully.", 'Bot Started'
         elif alert_type == 'bot_stopped':
             message, subject = "Trading Bot has been stopped.", 'Bot Stopped'
+        
+        # Safe message formatting for error
         elif alert_type == 'error':
             message = f"Error occurred: {trade_data.get('error', 'Unknown error')}" if trade_data else "Unknown Bot Error"
             subject = 'Bot Error'
+        
         else:
             return False
 
@@ -459,25 +477,28 @@ class AlertSystem:
 class AdvancedAnalytics:
     def __init__(self, trade_journal):
         self.journal = trade_journal
-
+    
+    # ... (other analytics methods remain the same) ...
     def generate_report(self):
         metrics = self.journal.get_performance_report()
         report = {
             'basic_metrics': metrics,
+            # 'daily_performance': self.get_daily_performance(), # Remove placeholder/unused methods
+            # 'strategy_analysis': self.analyze_strategies(),
             'risk_metrics': self.calculate_risk_metrics(),
             'improvement_suggestions': self.get_suggestions()
         }
         return report
-
+    
     def calculate_risk_metrics(self):
         conn = sqlite3.connect(self.journal.db_path)
         trades = pd.read_sql('''
-            SELECT timestamp, pnl FROM trades
-            WHERE pnl IS NOT NULL
+            SELECT timestamp, pnl FROM trades 
+            WHERE pnl IS NOT NULL 
             ORDER BY timestamp
         ''', conn)
         conn.close()
-
+        
         metrics = {}
         if not trades.empty and len(trades) > 1:
             trades['cumulative_pnl'] = trades['pnl'].cumsum()
@@ -486,14 +507,14 @@ class AdvancedAnalytics:
             metrics['max_drawdown'] = trades['drawdown'].max()
             metrics['avg_drawdown'] = trades['drawdown'].mean()
             metrics['sharpe_ratio'] = self.calculate_sharpe_ratio(trades)
-
+        
         return metrics
-
+    
     def calculate_sharpe_ratio(self, trades, risk_free_rate=0.05):
         if len(trades) < 2: return 0
         returns = trades['pnl'].pct_change().dropna()
         if returns.empty or returns.std() == 0: return 0
-
+        
         excess_returns = returns - (risk_free_rate / 252) # Daily risk-free rate estimate
         return (excess_returns.mean() / returns.std()) * (252 ** 0.5)
 
@@ -511,15 +532,8 @@ class AdvancedAnalytics:
 
 
 class TradingBot:
-    def __init__(self, api_key, client_id, client_pwd, totp_secret, email_sender, email_password, email_receiver):
-        self.api_key = api_key
-        self.client_id = client_id
-        self.client_pwd = client_pwd
-        self.totp_secret = totp_secret
-        
+    def __init__(self):
         self.obj = None
-        self.ws = None # New WebSocket client
-        self.ws_thread = None
         self.running = False
         self.thread = None
         self.status = "Idle"
@@ -532,14 +546,10 @@ class TradingBot:
         self.paper_pnl = 0
         self.paper_trades_log = []
         
-        # New: Store current LTP received from WebSocket
-        self.ltp_data = {} 
-        
         self.market_calendar = MarketCalendar()
         self.position_sizer = PositionSizer()
         self.trade_journal = TradeJournal()
-        # Pass credentials directly to AlertSystem
-        self.alert_system = AlertSystem(email_sender, email_password, email_receiver) 
+        self.alert_system = AlertSystem()
         self.analytics = AdvancedAnalytics(self.trade_journal)
         
         self.last_heartbeat = get_ist_time()
@@ -547,87 +557,35 @@ class TradingBot:
         
         self.load_state()
 
-    # --- WebSocket Handler ---
-    def on_message(self, ws, message):
-        """Processes real-time LTP data from WebSocket."""
-        try:
-            data = json.loads(message)
-            if data and data.get('action') == 'feed':
-                # Key is typically 'token' or 'symboltoken'
-                token = data.get('token')
-                ltp = data.get('ltp')
-                if token and ltp is not None:
-                    self.ltp_data[token] = float(ltp)
-                    # For monitoring active trade, update status with latest price
-                    if self.active_trade and self.active_trade.get('token') == token:
-                        self.status = f"LTP: {ltp:.2f} | SL: {self.active_trade['sl']:.2f} | TP: {self.active_trade['tp']:.2f}"
-        except Exception as e:
-            logging.error(f"WebSocket Message Error: {e}")
-
-    def on_close(self, ws):
-        logging.warning("WebSocket Connection Closed.")
-        # Attempt to reconnect if running
-        if self.running and self.market_calendar.is_trading_time():
-            time.sleep(5)
-            self.connect_websocket()
-
-    def connect_websocket(self):
-        if self.ws:
-            try: self.ws.close()
-            except: pass
-        
-        try:
-            self.ws = SmartStreamClient(
-                access_token=self.access_token, # Must be available after successful login
-                client_code=self.client_id,
-                feed_token=self.feed_token
-            )
-            self.ws.on_message = self.on_message
-            self.ws.on_close = self.on_close
-            self.ws_thread = threading.Thread(target=self.ws.connect, daemon=True)
-            self.ws_thread.start()
-            logging.info("WebSocket connected and thread started.")
-            return True
-        except Exception as e:
-            logging.error(f"WebSocket Connection Failed: {e}")
-            return False
-
-    def subscribe_ltp(self, token, exchange='NFO'):
-        if self.ws:
-            # Format: 'NFO|26000'
-            subscription_id = f"{exchange}|{token}"
-            self.ws.subscribe(subscription_id, feed_type='MARKET_DATA')
-            logging.info(f"Subscribed to LTP for {subscription_id}")
-            return True
-        return False
-        
-    def get_current_ltp(self, token):
-        """Fetches LTP from the internal dictionary updated by WebSocket."""
-        return self.ltp_data.get(token)
-
-
     def login(self):
         self.status = "Logging in..."
         try:
-            self.obj = SmartConnect(api_key=self.api_key)
-            otp = pyotp.TOTP(self.totp_secret).now() if self.totp_secret else None
-            data = self.obj.generateSession(self.client_id, self.client_pwd, otp)
+            # 1. Initialize SmartConnect
+            self.obj = SmartConnect(api_key=API_KEY)
+            otp = pyotp.TOTP(TOTP_SECRET).now() if TOTP_SECRET else None
             
+            # 2. Generate Session
+            data = self.obj.generateSession(CLIENT_ID, CLIENT_PWD, otp)
+            
+            # 3. Check for API Response Safely (Fixes 'NoneType' object has no attribute 'get')
             if data is not None:
                 if data.get('status'):
-                    self.access_token = self.obj.access_token # Store for WebSocket
-                    self.feed_token = self.obj.feed_token     # Store for WebSocket
                     self.status = "Logged in."
                     self.instrument_list = fetch_and_cache_instrument_list()
                     self.update_heartbeat()
+                    
+                    # Send login alert
                     self.alert_system.send_trade_alert('bot_started')
+                    
                     return True
                 
+                # If status is False, log the error message safely
                 self.status = f"Login Error: {data.get('message', 'API Error: Status False')}"
             else:
                 self.status = "Login Error: API returned no data (None)."
 
         except Exception as e: 
+            # 4. Handle exceptions during the process (Network, TOTP, etc.)
             error_msg = str(e)
             self.status = f"Login Exception: {error_msg}"
             self.alert_system.send_trade_alert('error', {'error': error_msg})
@@ -640,8 +598,14 @@ class TradingBot:
     def is_bot_frozen(self):
         time_since_last_heartbeat = (get_ist_time() - self.last_heartbeat).total_seconds()
         return time_since_last_heartbeat > self.freeze_threshold
-
-    # --- State Management (Remain the same) ---
+        
+    def get_bot_status_color(self):
+        if not self.running: return "gray"
+        if self.is_bot_frozen(): return "red"
+        time_since_heartbeat = (get_ist_time() - self.last_heartbeat).total_seconds()
+        if time_since_heartbeat > 30: return "orange"
+        return "green"
+        
     def save_state(self):
         conn = sqlite3.connect(STATE_DB)
         c = conn.cursor()
@@ -684,10 +648,6 @@ class TradingBot:
                 next_day = self.market_calendar.next_trading_day()
                 self.status = f"Market is closed. Bot will start automatically when market opens on {next_day}."
             
-            # Start WebSocket connection only if not paper trading and successfully logged in
-            if not params.get('is_paper_trading') and self.obj:
-                 self.connect_websocket()
-
             self.thread = threading.Thread(target=self.run_strategy_loop, daemon=True)
             self.thread.start()
             mode = "Paper Trading" if params.get('is_paper_trading') else "Live Trading"
@@ -698,9 +658,6 @@ class TradingBot:
     def stop(self): 
         self.running = False
         self.status = "Bot stopped by user."
-        if self.ws:
-            try: self.ws.close()
-            except: pass
         self.alert_system.send_trade_alert('bot_stopped')
     
     def check_exit_conditions(self, ltp):
@@ -729,7 +686,6 @@ class TradingBot:
         return None
 
     def exit_trade(self, reason, ltp, is_paper):
-        # ... (Exit logic remains the same)
         if ltp is None: ltp = self.active_trade['entry_price']
         
         pnl = (ltp - self.active_trade['entry_price']) * self.active_trade['qty']
@@ -777,17 +733,11 @@ class TradingBot:
                 return
 
             try:
-                if is_paper:
-                    # In paper trading, we still rely on historical data or manual simulation
-                    # For simplicity, paper trades will only exit at EOD in this version if market is closed.
-                    # A true paper monitor would need a simulated LTP feed.
-                    ltp = self.active_trade['entry_price'] + (self.daily_pnl / self.active_trade['qty']) # Crude simulation
-                else:
-                    # Use WebSocket LTP
-                    ltp = self.get_current_ltp(self.active_trade['token'])
+                ltp = get_option_ltp(self.obj, self.active_trade['exchange'], 
+                                   self.active_trade['symbol'], self.active_trade['token'])
                 
                 if ltp is None:
-                    self.status = "LTP प्राप्त नहीं हो रहा (WebSocket से प्रतीक्षा)"
+                    self.status = "LTP प्राप्त नहीं हो रहा"
                     return
                     
                 exit_reason = self.check_exit_conditions(ltp)
@@ -827,13 +777,14 @@ class TradingBot:
                         self.monitor_active_trade()
                     else:
                         for index_name in indices_to_monitor:
-                            self.status = f"Checking {index_name} for signals..."
+                            self.status = f"Checking {index_name}..."
                             config = INDEX_CONFIG[index_name]
                             futures_token = find_index_futures_token(self.instrument_list, index_name, config['exchange'])
                             if not futures_token: continue
                             
                             df = try_fetch_candles(self.obj, futures_token, self.params['interval'], 1, config['exchange'])
                             
+                            # Use explicit length check
                             if df is None or len(df) == 0: continue
                             
                             current_candle_time = df.iloc[-1]['timestamp']
@@ -847,12 +798,13 @@ class TradingBot:
 
                             if signals:
                                 signal = signals[-1]
-                                self.status = f"{signal['signal']} Signal in {index_name}! Processing trade..."
+                                self.status = f"{signal['signal']} Signal in {index_name}! Processing..."
                                 
                                 spot = signal['entry_price']
                                 atm = round(spot / config['strike_step']) * config['strike_step']
                                 trade_type = "CE" if signal['signal'] == "CALL" else "PE"
                                 
+                                # This needs expiry. Ensure 'expiry' is set in self.params.
                                 if 'expiry' not in self.params:
                                     logging.error("Expiry date not set in parameters.")
                                     continue
@@ -863,15 +815,9 @@ class TradingBot:
                                     logging.warning(f"Skipping trade: {re}")
                                     continue
                                     
-                                # Get entry price from live feed or API (API backup for entry)
-                                entry_price_api = self.obj.ltpData(exchange=config['exchange'], tradingsymbol=symbol, symboltoken=str(token))
-                                if entry_price_api and entry_price_api.get("data") and "ltp" in entry_price_api["data"]:
-                                    entry_price = float(entry_price_api["data"]["ltp"])
-                                else:
-                                    self.status = f"Error getting LTP for entry: {symbol}"
-                                    continue
-                                    
-                                if entry_price > min_option_price: 
+                                entry_price = get_option_ltp(self.obj, config['exchange'], symbol, token)
+                                
+                                if entry_price and entry_price > min_option_price: 
                                     qty = self.position_sizer.calculate_position_size(
                                         self.params['capital'], 
                                         self.params['risk_per_trade'],
@@ -881,10 +827,6 @@ class TradingBot:
                                     
                                     order_id = place_order(self.obj, symbol, token, qty, config['exchange'], "BUY", is_paper_trading=is_paper)
                                     if order_id:
-                                        # New: Subscribe to this trade's token for real-time exit monitoring
-                                        if not is_paper:
-                                            self.subscribe_ltp(token, config['exchange']) 
-
                                         self.active_trade = {
                                             "symbol": symbol, "token": token, "qty": qty, 
                                             "exchange": config['exchange'], "index": index_name,
@@ -903,7 +845,7 @@ class TradingBot:
                                 else:
                                     logging.warning(f"Trade skipped for {symbol}. Entry price {entry_price} is below minimum {min_option_price}.")
                         
-                        if not self.active_trade: self.status = "Monitoring for Signals..."
+                        if not self.active_trade: self.status = "Monitoring..."
             
             except Exception as e:
                 self.status = f"Error in loop: {e}"
@@ -984,13 +926,10 @@ def run_backtest_with_trailing_sl(bot, backtest_index, start_date, end_date, par
     
     date_range = pd.date_range(start_date, end_date)
     
-    # --- New: Use a more realistic delta for option price simulation ---
-    HYPO_DELTA = 0.5 
-    
     for single_date in date_range:
         if single_date.weekday() < 5:
             df_hist = try_fetch_historical_candles(bot.obj, futures_token, params['interval'], single_date, config["exchange"])
-            if df_hist is not None and len(df_hist) > 0: # Use len() check
+            if df_hist is not None and not df_hist.empty:
                 signals = [s for s in detect_strategy_signals(df_hist, params, is_backtest=True) 
                           if s['signal'] == trade_type_backtest]
                 
@@ -1010,16 +949,15 @@ def run_backtest_with_trailing_sl(bot, backtest_index, start_date, end_date, par
                     
                     for j in range(sig['entry_index'] + 1, len(df_hist)):
                         c = df_hist.iloc[j]
-                        
-                        # --- Enhanced Option Price Simulation using HYPO_DELTA ---
+                        # Calculate option price movement based on index movement
                         index_move = c['close'] - sig['entry_price']
-                        est_price = hypo_entry + (index_move * HYPO_DELTA) 
-
+                        est_price = hypo_entry + index_move # Simplified delta=1 assumption
+                        
+                        # Use candle High/Low for quicker exits (conservative backtesting)
                         index_high_move = c['high'] - sig['entry_price']
                         index_low_move = c['low'] - sig['entry_price']
-                        est_high = hypo_entry + (index_high_move * HYPO_DELTA)
-                        est_low = hypo_entry + (index_low_move * HYPO_DELTA)
-                        # --- End Enhanced Simulation ---
+                        est_high = hypo_entry + index_high_move
+                        est_low = hypo_entry + index_low_move
                         
                         # Trailing SL update
                         if use_trailing:
@@ -1034,16 +972,15 @@ def run_backtest_with_trailing_sl(bot, backtest_index, start_date, end_date, par
                             status, exit_price, exit_timestamp = "SL_HIT", current_sl, c['timestamp']
                             break
                         elif est_high >= target_price: 
-                            exit_price_final = target_price - slippage
-                            status, exit_price, exit_timestamp = "TP_HIT", exit_price_final, c['timestamp']
+                            # Exit at TP, adjust for slippage on exit
+                            status, exit_price, exit_timestamp = "TP_HIT", target_price - slippage, c['timestamp']
                             break
                         elif c['timestamp'].time() >= dt_time(15, 20): 
                             status, exit_price, exit_timestamp = "EOD_EXIT", est_price, c['timestamp']
                             break
                     
                     if status == "UNKNOWN": 
-                        final_index_move = df_hist.iloc[-1]['close'] - sig['entry_price']
-                        status, exit_price, exit_timestamp = "EOD_NO_EXIT", hypo_entry + (final_index_move * HYPO_DELTA), df_hist.iloc[-1]['timestamp']
+                        status, exit_price, exit_timestamp = "EOD_NO_EXIT", hypo_entry + index_move, df_hist.iloc[-1]['timestamp']
                     
                     pnl = ((exit_price - hypo_entry) * contracts_qty) - trade_cost
                     
@@ -1064,7 +1001,7 @@ def run_backtest_with_trailing_sl(bot, backtest_index, start_date, end_date, par
     return all_trades
 
 def display_bot_health(bot):
-    st.subheader("🤖 बॉट हेल्थ मॉनिटर v5.0")
+    st.subheader("🤖 बॉट हेल्थ मॉनिटर v4.0")
     col1, col2, col3, col4 = st.columns(4)
     status_color = bot.get_bot_status_color()
     status_map = {"green": "🟢 सामान्य", "orange": "🟠 उलझा हुआ", "red": "🔴 फ्रीज", "gray": "⚫ बंद"}
@@ -1140,13 +1077,13 @@ def display_trade_journal(bot):
         ''', conn)
         conn.close()
         
-        if len(trades_df) > 0:
+        if len(trades_df) > 0: # Use len() check
             st.dataframe(trades_df)
             metrics = bot.trade_journal.get_performance_report()
             
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("कुल ट्रेड्स", metrics.get('total_trades', 0))
-            col2.metric("जीतने वाले ट्रेड्स", int(metrics.get('total_trades', 0) * metrics.get('win_rate', 0) / 100) if metrics.get('total_trades', 0) > 0 else 0)
+            col2.metric("जीतने वाले ट्रेड्स", metrics.get('total_trades', 0) * metrics.get('win_rate', 0) / 100 if metrics.get('total_trades', 0) > 0 else 0)
             col3.metric("जीत दर", f"{metrics.get('win_rate', 0):.1f}%")
             col4.metric("कुल PnL", f"₹{metrics.get('total_pnl', 0):,.2f}")
         else:
@@ -1184,15 +1121,14 @@ def display_analytics(bot):
 
 
 def main():
-    st.set_page_config(page_title="Professional Trading Bot v5.0", layout="wide", page_icon="🚀")
+    st.set_page_config(page_title="Professional Trading Bot v4.0", layout="wide", page_icon="🚀")
     
-    # Pass credentials from .env to the bot constructor
     if 'bot' not in st.session_state: 
-        st.session_state.bot = TradingBot(API_KEY, CLIENT_ID, CLIENT_PWD, TOTP_SECRET, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER)
+        st.session_state.bot = TradingBot()
     bot = st.session_state.bot
     
     # --- Sidebar ---
-    st.sidebar.title("⚙️ प्रोफेशनल ट्रेडिंग बॉट v5.0")
+    st.sidebar.title("⚙️ प्रोफेशनल ट्रेडिंग बॉट v4.0")
     current_time = display_current_time()
     
     is_paper_trading = st.sidebar.toggle("पेपर ट्रेडिंग मोड", value=True)
@@ -1200,11 +1136,12 @@ def main():
     st.session_state.strategy_params['is_paper_trading'] = is_paper_trading
     
     st.sidebar.subheader("🔔 अलर्ट सेटिंग्स")
-    email_alerts_configured = bool(EMAIL_SENDER) 
-    if email_alerts_configured:
+    # Email alert checkbox now only controls the UI message, as the system attempts to send alerts only if credentials exist.
+    email_alerts_enabled = bool(EMAIL_SENDER) 
+    if email_alerts_enabled:
         st.sidebar.success("ईमेल अलर्ट क्रेडेंशियल कॉन्फ़िगर किए गए हैं।")
     else:
-        st.sidebar.warning("ईमेल क्रेडेंशियल कॉन्फ़िगर नहीं हैं। अलर्ट नहीं भेजे जाएंगे।")
+        st.sidebar.warning("ईमेल अलर्ट क्रेडेंशियल (EMAIL_SENDER/PASSWORD/RECEIVER) कॉन्फ़िगर नहीं हैं। अलर्ट नहीं भेजे जाएंगे।")
 
     st.sidebar.markdown("---")
     
@@ -1222,9 +1159,9 @@ def main():
             st.sidebar.success("जर्नल रीसेट हो गया!")
 
     # --- Main Content Header ---
-    title_text = f"💰 प्रोफेशनल ट्रेडिंग बॉट v5.0 ({'पेपर ट्रेडिंग' if is_paper_trading else 'लाइव ट्रेडिंग'})"
+    title_text = f"💰 प्रोफेशनल ट्रेडिंग बॉट v4.0 ({'पेपर ट्रेडिंग' if is_paper_trading else 'लाइव ट्रेडिंग'})"
     st.title(title_text)
-    st.success("🎯 WebSockets और डेल्टा सिमुलेशन के साथ उन्नत सुरक्षा और गति")
+    st.success("🎯 नई स्थिरता और सुरक्षा के साथ v4.0")
     
     display_bot_health(bot)
     
@@ -1240,7 +1177,7 @@ def main():
         else:
             st.success("✅ सफलतापूर्वक लॉगिन हो गया")
             if st.button("लॉगआउट करें", key="logout_btn"):
-                if bot.obj: bot.obj.terminateSession(CLIENT_ID)
+                bot.obj.terminateSession(CLIENT_ID)
                 bot.obj = None
                 st.rerun()
     
@@ -1250,14 +1187,9 @@ def main():
                 if not st.session_state.strategy_params.get('expiry'): st.error("कृपया पहले एक एक्सपायरी चुनें")
                 else:
                     trade_mode = st.session_state.strategy_params.get('trade_mode')
-                    # Set indices to monitor based on UI choice
-                    st.session_state.strategy_params['indices_to_monitor'] = ALL_INDICES if 'स्वचालित' in trade_mode else [trade_mode.split(" ")[1]]
-                    
-                    if not bot.obj and not is_paper_trading:
-                        st.error("लाइव ट्रेडिंग के लिए पहले लॉगिन करें।")
-                    else:
-                        bot.start(st.session_state.strategy_params)
-                        st.rerun()
+                    st.session_state.strategy_params['indices_to_monitor'] = ALL_INDICES if trade_mode == 'स्वचालित (सभी इंडेक्स)' else [trade_mode.split(" ")[1]]
+                    bot.start(st.session_state.strategy_params)
+                    st.rerun()
         else:
             if st.button("🛑 बॉट रोकें", key="stop_btn"): 
                 bot.stop()
@@ -1267,12 +1199,12 @@ def main():
         st.markdown(f"**बॉट स्थिति:** {bot.status}")
         market_status = "🟢 खुला" if bot.market_calendar.is_trading_time() else "🔴 बंद"
         st.markdown(f"**बाजार स्थिति:** {market_status}")
-        if bot.running and not is_paper_trading and bot.ws:
-            st.markdown(f"**WebSocket:** 🟢 Connected")
-        elif bot.running and not is_paper_trading:
-            st.markdown(f"**WebSocket:** 🟠 Connecting...")
-        else:
-            st.markdown(f"**WebSocket:** ⚪ Inactive")
+        if bot.running and bot.last_checked:
+            try:
+                last_check_time = datetime.strptime(bot.last_checked, "%Y-%m-%d %H:%M:%S")
+                time_diff = (make_naive(get_ist_time()) - last_check_time).total_seconds()
+                st.markdown(f"**आखिरी जाँच:** {int(time_diff)} सेकंड पहले")
+            except Exception: pass
     
     pnl_c1, pnl_c2 = st.columns(2)
     pnl_c1.metric("आज का लाइव PnL", f"₹ {bot.daily_pnl:,.2f}")
@@ -1285,12 +1217,6 @@ def main():
             "Entry Price": f"₹{bot.active_trade['entry_price']:.2f}", "Current SL": f"₹{bot.active_trade['sl']:.2f}",
             "Current TP": f"₹{bot.active_trade['tp']:.2f}", "Entry Time": bot.active_trade['entry_time']
         }
-        # Display live LTP if available
-        current_ltp = bot.get_current_ltp(bot.active_trade['token'])
-        if current_ltp:
-            trade_data['Current LTP'] = f"₹{current_ltp:.2f}"
-            pnl_c1.metric("अवास्तविक PnL", f"₹{((current_ltp - bot.active_trade['entry_price']) * bot.active_trade['qty']):,.2f}")
-        
         st.json(trade_data)
     
     # --- 2) Strategy Parameters ---
@@ -1315,18 +1241,17 @@ def main():
         with col1:
             st.session_state.strategy_params['risk_per_trade'] = st.number_input("प्रति ट्रेड रिस्क (%)", 0.1, 5.0, value=1.0, step=0.1) / 100
             st.session_state.strategy_params['sl_offset'] = st.number_input("SL ऑफ़सेट (₹)", 1.0, 100.0, value=20.0, step=0.5)
-            st.session_state.strategy_params['tp_offset'] = st.number_input("TP ऑफ़सेट (₹)", 1.0, 100.0, value=40.0, step=0.5)
+            st.session_state.strategy_params['tp_offset'] = st.number_input("TP ऑफ़सेट (₹)", 1.0, 100.0, value=20.0, step=0.5)
         with col2:
             st.session_state.strategy_params['max_daily_loss'] = st.number_input("मैक्स डेली लॉस (₹)", 1000, 50000, value=10000, step=1000)
             st.session_state.strategy_params['min_option_price'] = st.number_input("मिनिमम ऑप्शन प्राइस (₹)", 5.0, 100.0, value=20.0, step=1.0)
-            nifty_lot_size = INDEX_CONFIG['NIFTY']['lot_size']
-            st.info(f"सुझाया गया पोजीशन साइज़ (NIFTY): {bot.position_sizer.calculate_position_size(st.session_state.strategy_params['capital'], st.session_state.strategy_params['risk_per_trade'], st.session_state.strategy_params['sl_offset'], nifty_lot_size)} units")
+            st.info(f"सुझाया गया पोजीशन साइज़ (NIFTY): {bot.position_sizer.calculate_position_size(st.session_state.strategy_params['capital'], st.session_state.strategy_params['risk_per_trade'], st.session_state.strategy_params['sl_offset'], 75)} units")
     
     with tab3:
         col1, col2 = st.columns(2)
         with col1:
-            st.session_state.strategy_params['start_trailing_after_points'] = st.number_input("ट्रेलिंग SL शुरू करें (पॉइंट्स)", 0.0, 100.0, value=20.0, step=1.0)
-            st.session_state.strategy_params['trailing_sl_gap_points'] = st.number_input("ट्रेलिंग SL गैप (पॉइंट्स)", 0.0, 50.0, value=10.0, step=1.0)
+            st.session_state.strategy_params['start_trailing_after_points'] = st.number_input("ट्रेलिंग SL शुरू करें (पॉइंट्स)", 0.0, 100.0, value=0.0, step=1.0)
+            st.session_state.strategy_params['trailing_sl_gap_points'] = st.number_input("ट्रेलिंग SL गैप (पॉइंट्स)", 0.0, 50.0, value=20.0, step=1.0)
         with col2:
             st.session_state.strategy_params['exit_on_points_gain'] = st.number_input("पॉइंट्स गेन पर एक्जिट", 0.0, 200.0, value=0.0, step=1.0)
     
@@ -1349,7 +1274,7 @@ def main():
     if st.session_state.get("expiries"):
         st.session_state.strategy_params['expiry'] = st.selectbox("एक्सपायरी चुनें", st.session_state.get("expiries", []))
     else:
-        st.session_state.strategy_params['expiry'] = '2025-09-30'
+        st.session_state.strategy_params['expiry'] = '2025-09-30' # Default value to avoid error if no expiries loaded
         st.info("ऊपर बटन दबाकर एक्सपायरी लोड करें")
     
     # --- 4) Performance Analysis ---
@@ -1360,7 +1285,6 @@ def main():
     
     # --- 5) Backtesting ---
     st.header("5) बैकटेस्टिंग (Trailing SL के साथ)")
-    st.warning("⚠️ बैकटेस्ट परिणाम अब अधिक यथार्थवादी **Delta (0.5)** का उपयोग करते हैं।")
     backtest_col1, backtest_col2 = st.columns([2, 1])
     with backtest_col1:
         backtest_index = st.selectbox("बैकटेस्ट के लिए इंडेक्स", ALL_INDICES, key="bt_index")
@@ -1391,6 +1315,7 @@ def main():
                     st.success(f"बैकटेस्ट पूरा! {len(all_trades)} ट्रेड मिले")
                     st.dataframe(trades_df)
                     
+                    # Performance summary
                     total_pnl = trades_df['net_pnl'].sum()
                     wins = len(trades_df[trades_df['net_pnl'] > 0])
                     
@@ -1398,18 +1323,19 @@ def main():
                     col1.metric("कुल PnL", f"₹{total_pnl:,.2f}")
                     col2.metric("कुल ट्रेड्स", len(trades_df))
                     col3.metric("जीतने वाले ट्रेड्स", wins)
+                    # Use explicit length check for safety (Fixes Pandas ValueError)
                     col4.metric("जीत दर", f"{(wins/len(trades_df))*100:.1f}%" if len(trades_df) > 0 else "0%") 
     
     # --- Footer ---
     st.markdown("---")
     st.markdown("""
-    ### 🚀 v5.0 मुख्य सुधार:
-    - **🌐 WebSockets:** लाइव ट्रेड के लिए LTP प्राप्त करने हेतु API पुलिंग के बजाय WebSockets का उपयोग।
-    - **📐 यथार्थवादी डेल्टा:** बैकटेस्टिंग में ऑप्शन प्राइस सिमुलेशन के लिए **0.5** डेल्टा का उपयोग।
-    - **🔑 बेहतर कॉन्फ़िगरेशन:** क्रेडेंशियल्स को सीधे `TradingBot` क्लास में पास किया जाता है, जिससे क्लास अधिक मॉड्यूलर बनती है।
+    ### 🚀 v4.0 नई स्थिरता:
+    - **🔐 सुरक्षित लॉगिन:** `NoneType` त्रुटियों से बचने के लिए `login()` फ़ंक्शन को पूरी तरह से सुरक्षित किया गया।
+    - **⚙️ मजबूत कोडिंग:** Pandas `ValueError` से बचने के लिए सभी DataFrame चेक्स को `len(df) > 0` का उपयोग करके मजबूत बनाया गया।
+    - **🔔 इंटेलिजेंट अलर्ट:** केवल क्रेडेंशियल्स उपलब्ध होने पर ही अलर्ट भेजने का प्रयास।
     """)
 
 if __name__ == "__main__":
     main()
 
-
+# </editor-fold>
