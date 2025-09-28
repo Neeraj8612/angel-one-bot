@@ -13,15 +13,10 @@ import gzip
 import retrying
 import sqlite3
 import matplotlib.pyplot as plt
+import smtplib
+from email.mime.text import MIMEText
 from threading import Lock
 import pytz
-
-# --- Timezone Configuration ---
-IST = pytz.timezone('Asia/Kolkata')
-
-def get_ist_time():
-    """Get current Indian Standard Time"""
-    return datetime.now(IST)
 
 # --- Basic Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,11 +24,38 @@ file_handler = logging.FileHandler('trading_bot.log')
 file_handler.setLevel(logging.INFO)
 logging.getLogger().addHandler(file_handler)
 
-# --- Streamlit Cache Configuration ---
-@st.cache_resource(show_spinner=False, ttl=300)
-def get_bot_instance():
-    """Get cached bot instance"""
-    return TradingBot()
+# --- Timezone Configuration ---
+IST = pytz.timezone('Asia/Kolkata')
+
+def get_ist_time():
+    """Get current time in IST timezone"""
+    return datetime.now(IST)
+
+def make_naive(dt):
+    """Convert aware datetime to naive datetime"""
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+def format_ist_time(dt=None, format_str="%Y-%m-%d %H:%M:%S"):
+    """Format datetime to IST time string"""
+    if dt is None:
+        dt = get_ist_time()
+    elif dt.tzinfo is not None:
+        dt = dt.astimezone(IST)
+    else:
+        dt = IST.localize(dt)
+    return dt.strftime(format_str)
+
+def get_display_time():
+    """Get formatted time for display (mobile and desktop friendly)"""
+    now = get_ist_time()
+    return {
+        "date": now.strftime("%d-%m-%Y"),
+        "time": now.strftime("%H:%M:%S"),
+        "day": now.strftime("%A"),
+        "full": now.strftime("%d-%m-%Y %H:%M:%S %Z")
+    }
 
 # --- Try to import SmartApi ---
 try:
@@ -48,6 +70,9 @@ API_KEY = os.getenv("API_KEY")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_PWD = os.getenv("CLIENT_PWD")
 TOTP_SECRET = os.getenv("TOTP_SECRET")
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
 # --- Central Index Configuration ---
 INDEX_CONFIG = {
@@ -69,7 +94,8 @@ def fetch_and_cache_instrument_list():
     try:
         if os.path.exists(INSTRUMENT_CACHE_FILE):
             file_mod_time = datetime.fromtimestamp(os.path.getmtime(INSTRUMENT_CACHE_FILE))
-            if datetime.now() - file_mod_time < timedelta(hours=24):
+            current_time_naive = make_naive(get_ist_time())
+            if current_time_naive - file_mod_time < timedelta(hours=24):
                 with gzip.open(INSTRUMENT_CACHE_FILE, 'rt', encoding='utf-8') as f: 
                     return json.load(f)
         logging.info("Downloading fresh instrument list.")
@@ -90,14 +116,14 @@ def find_index_futures_token(instrument_list, index_name, exchange):
     config = INDEX_CONFIG[index_name]
     instrument_name = config.get("instrument_name", index_name)
     futures = []
-    today = datetime.now().date()
+    today = get_ist_time().date()
     
     for item in instrument_list:
         if (item.get("instrumenttype") == "FUTIDX" and 
             item.get("name") == instrument_name and 
             item.get("exch_seg") == exchange):
             
-            # Block NIFTYNXT50 completely
+            # NIFTYNXT50 को पूरी तरह ब्लॉक करें
             if "NIFTYNXT50" in item.get("symbol", ""):
                 continue
             if "NEXT" in item.get("symbol", "").upper():
@@ -141,8 +167,8 @@ def try_fetch_candles(obj, symbol_token, interval, days_back, exchange):
         "exchange": exchange, 
         "symboltoken": str(symbol_token), 
         "interval": imap.get(interval),
-        "fromdate": from_dt.strftime("%Y-%m-%d %H:%M"), 
-        "todate": to_dt.strftime("%Y-%m-%d %H:%M")
+        "fromdate": make_naive(from_dt).strftime("%Y-%m-%d %H:%M"), 
+        "todate": make_naive(to_dt).strftime("%Y-%m-%d %H:%M")
     }
     try:
         res = obj.getCandleData(params)
@@ -207,8 +233,8 @@ def calculate_macd(df, short_window=12, long_window=26, signal_window=9):
 
 def detect_strategy_signals(df, params, is_backtest=False):
     """
-    Detect trading signals
-    is_backtest: True if for backtesting
+    सिग्नल डिटेक्ट करें
+    is_backtest: True अगर बैकटेस्टिंग के लिए है
     """
     signals = []
     if df is None or len(df) < 26: 
@@ -218,16 +244,16 @@ def detect_strategy_signals(df, params, is_backtest=False):
     df['rsi'] = calculate_rsi(df, period=params['rsi_period'])
     df = calculate_macd(df)
     
-    # Different logic for backtesting
+    # बैकटेस्टिंग के लिए अलग लॉजिक
     if is_backtest:
         for i in range(1, len(df)):
             current_candle, prev_candle = df.iloc[i], df.iloc[i - 1]
             
-            # Market time check (in backtest)
+            # मार्केट टाइम चेक (बैकटेस्ट में)
             if not (dt_time(9, 20) <= current_candle['timestamp'].time() < dt_time(15, 20)): 
                 continue
             
-            # Signal logic
+            # सिग्नल लॉजिक
             is_ema_bullish_cross = prev_candle['close'] < prev_candle['ema'] and current_candle['close'] > current_candle['ema']
             is_macd_bullish_cross = prev_candle['macd'] < prev_candle['macd_signal'] and current_candle['macd'] > current_candle['macd_signal']
             is_rsi_bullish = current_candle['rsi'] > 50
@@ -252,26 +278,26 @@ def detect_strategy_signals(df, params, is_backtest=False):
                     "entry_index": i
                 })
     else:
-        # For live trading - only last candle
+        # लाइव ट्रेडिंग के लिए - सिर्फ आखिरी कैंडल
         if len(df) > 0:
             current_candle = df.iloc[-1]
             prev_candle = df.iloc[-2] if len(df) > 1 else current_candle
             
             # Timezone fix
-            current_time = get_ist_time().replace(tzinfo=None)
+            current_time = make_naive(get_ist_time())
             candle_time = current_candle['timestamp']
             
             time_diff = (current_time - candle_time).total_seconds()
             
-            # Ignore candle if older than 2 minutes
+            # कैंडल 2 मिनट से ज्यादा पुरानी है तो इग्नोर करें
             if time_diff > 120:
                 return signals
                 
-            # Market time check (9:20 AM - 3:20 PM)
+            # मार्केट टाइम चेक (9:20 AM - 3:20 PM)
             if not (dt_time(9, 20) <= current_candle['timestamp'].time() < dt_time(15, 20)): 
                 return signals
             
-            # Signal logic (only for last candle)
+            # सिग्नल लॉजिक (सिर्फ आखिरी कैंडल के लिए)
             is_ema_bullish_cross = prev_candle['close'] < prev_candle['ema'] and current_candle['close'] > current_candle['ema']
             is_macd_bullish_cross = prev_candle['macd'] < prev_candle['macd_signal'] and current_candle['macd'] > current_candle['macd_signal']
             is_rsi_bullish = current_candle['rsi'] > 50
@@ -334,7 +360,7 @@ def place_order(obj, symbol, token, qty, exchange, transaction_type, is_paper_tr
         return None
 
 def get_expiry_list(bot, index_name):
-    """Get expiry list correctly"""
+    """सही तरीके से एक्सपायरी लिस्ट प्राप्त करें"""
     if not bot.obj:
         return []
         
@@ -352,7 +378,7 @@ def get_expiry_list(bot, index_name):
             item.get("instrumenttype") == "OPTIDX" and 
             item.get("expiry")):
             
-            # Avoid NIFTYNXT50
+            # NIFTYNXT50 से बचें
             if "NIFTYNXT50" in item.get("symbol", ""):
                 continue
             if "NEXT" in item.get("symbol", "").upper():
@@ -360,7 +386,7 @@ def get_expiry_list(bot, index_name):
                 
             try:
                 expiry_date = datetime.strptime(item["expiry"], '%d%b%Y').date()
-                if expiry_date >= datetime.now().date():
+                if expiry_date >= get_ist_time().date():
                     expiries.add(expiry_date)
             except ValueError:
                 continue
@@ -369,7 +395,7 @@ def get_expiry_list(bot, index_name):
 
 def run_backtest_with_trailing_sl(bot, backtest_index, start_date, end_date, params, 
                                  hypo_opt_price, trade_cost, trade_type_backtest, slippage):
-    """Run backtest with Trailing SL"""
+    """Trailing SL के साथ बैकटेस्ट चलाएं"""
     config = INDEX_CONFIG[backtest_index]
     
     sl_points = params['sl_offset']
@@ -382,6 +408,7 @@ def run_backtest_with_trailing_sl(bot, backtest_index, start_date, end_date, par
     futures_token = find_index_futures_token(instrument_list, backtest_index, config['exchange']) 
     
     if not futures_token: 
+        st.error(f"Futures token not found for {backtest_index}")
         return None
     
     date_range = pd.date_range(start_date, end_date)
@@ -472,7 +499,7 @@ class TradingBot:
         self.paper_pnl = 0
         self.paper_trades_log = []
         
-        # New heartbeat system with timezone
+        # नया हार्टबीट सिस्टम
         self.last_heartbeat = get_ist_time()
         self.heartbeat_interval = 10  # seconds
         self.freeze_threshold = 60    # seconds
@@ -496,52 +523,28 @@ class TradingBot:
         return False
         
     def update_heartbeat(self):
-        """Update heartbeat after every successful loop"""
+        """हर सफल लूप के बाद हार्टबीट अपडेट करें"""
         self.last_heartbeat = get_ist_time()
         
     def is_bot_frozen(self):
-        """Check if bot is frozen"""
+        """चेक करें कि बॉट फ्रीज तो नहीं हुआ"""
         time_since_last_heartbeat = (get_ist_time() - self.last_heartbeat).total_seconds()
         return time_since_last_heartbeat > self.freeze_threshold
         
     def get_bot_status_color(self):
-        """Return color based on bot status"""
+        """बॉट की स्थिति के अनुसार रंग रिटर्न करें"""
         if not self.running:
-            return "gray"  # Stopped
+            return "gray"  # बंद है
         
         if self.is_bot_frozen():
-            return "red"   # Frozen
+            return "red"   # फ्रीज हो गया है
         
         time_since_heartbeat = (get_ist_time() - self.last_heartbeat).total_seconds()
         if time_since_heartbeat > 30:
-            return "orange"  # Slow/Stuck
+            return "orange"  # उलझा हुआ/स्लो
         
-        return "green"     # Running normally
+        return "green"     # सही चल रहा है
         
-    def get_last_checked_display(self):
-        """Return formatted time for display"""
-        if self.last_checked:
-            try:
-                # Timezone conversion
-                if isinstance(self.last_checked, str):
-                    last_check_naive = datetime.strptime(self.last_checked, "%Y-%m-%d %H:%M:%S")
-                    last_check_ist = IST.localize(last_check_naive)
-                else:
-                    last_check_ist = self.last_checked.astimezone(IST) if self.last_checked.tzinfo else IST.localize(self.last_checked)
-                
-                current_time_ist = get_ist_time()
-                time_diff = (current_time_ist - last_check_ist).total_seconds()
-                
-                return {
-                    'formatted_time': last_check_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
-                    'seconds_ago': int(time_diff),
-                    'is_stale': time_diff > 300  # Older than 5 minutes
-                }
-            except Exception as e:
-                logging.error(f"Time conversion error: {e}")
-                return {'formatted_time': 'Error', 'seconds_ago': 999, 'is_stale': True}
-        return {'formatted_time': 'Never', 'seconds_ago': 999, 'is_stale': True}
-
     def save_state(self):
         conn = sqlite3.connect(STATE_DB)
         c = conn.cursor()
@@ -591,13 +594,13 @@ class TradingBot:
         self.status = "Bot stopped by user."
     
     def check_exit_conditions(self, ltp):
-        """Check exit conditions"""
+        """एग्जिट कंडीशन चेक करें"""
         if ltp <= self.active_trade['sl']: 
             return f"SL hit at {ltp:.2f}"
         elif ltp >= self.active_trade['tp']: 
             return f"TP hit at {ltp:.2f}"
         
-        # Trailing SL
+        # ट्रेलिंग SL
         if self.params.get('start_trailing_after_points', 0) > 0:
             self.active_trade['high_water_mark'] = max(
                 self.active_trade.get('high_water_mark', self.active_trade['entry_price']), 
@@ -611,7 +614,7 @@ class TradingBot:
                     self.status = f"SL Trailed to {new_sl:.2f}"
                     self.save_state()
         
-        # Exit on points gain
+        # पॉइंट्स गेन पर एक्जिट
         exit_on_gain = self.params.get('exit_on_points_gain', 0)
         if exit_on_gain > 0 and ltp >= self.active_trade['entry_price'] + exit_on_gain:
             return f"Exit on Gain at {ltp:.2f}"
@@ -619,7 +622,7 @@ class TradingBot:
         return None
 
     def exit_trade(self, reason, ltp, is_paper):
-        """Exit trade"""
+        """ट्रेड एक्जिट करें"""
         if ltp is None:
             ltp = self.active_trade['entry_price']
         
@@ -632,7 +635,7 @@ class TradingBot:
                 "exit_price": ltp, 
                 "pnl": pnl, 
                 "exit_reason": reason, 
-                "exit_time": get_ist_time().strftime('%H:%M:%S IST')
+                "exit_time": format_ist_time()
             })
             self.paper_trades_log.append(log_entry)
         else: 
@@ -655,13 +658,13 @@ class TradingBot:
 
             is_paper = self.active_trade.get("is_paper_trading", False)
             
-            # First check market time
+            # पहले मार्केट टाइम चेक
             if get_ist_time().time() >= dt_time(15, 20):
                 self.exit_trade("EOD", None, is_paper)
                 return
 
             try:
-                # Get LTP (with retry)
+                # LTP प्राप्त करें (रिट्राय के साथ)
                 ltp = None
                 for attempt in range(3):
                     ltp = get_option_ltp(self.obj, self.active_trade['exchange'], 
@@ -671,16 +674,16 @@ class TradingBot:
                     time.sleep(1)
                 
                 if ltp is None:
-                    self.status = "LTP not available"
+                    self.status = "LTP प्राप्त नहीं हो रहा"
                     return
                     
-                # SL/TP logic
+                # SL/TP लॉजिक
                 exit_reason = self.check_exit_conditions(ltp)
                 if exit_reason:
                     self.exit_trade(exit_reason, ltp, is_paper)
                     
             except Exception as e:
-                logging.error(f"Monitoring error: {e}")
+                logging.error(f"मॉनिटरिंग एरर: {e}")
             
     def run_strategy_loop(self):
         if not self.obj and not self.login(): 
@@ -693,13 +696,13 @@ class TradingBot:
         
         indices_to_monitor = self.params.get('indices_to_monitor', [])
         is_paper = self.params.get('is_paper_trading', False)
-        trade_direction = self.params.get('trade_direction', 'Both (CALL & PUT)')
+        trade_direction = self.params.get('trade_direction', 'दोनों (CALL और PUT)')
         min_option_price = self.params.get('min_option_price', 20.0)
 
         while self.running:
             now = get_ist_time()
             try:
-                # Heartbeat update
+                # हार्टबीट अपडेट
                 self.update_heartbeat()
                 
                 with self.lock:
@@ -717,18 +720,18 @@ class TradingBot:
                             if df is None or len(df) == 0: 
                                 continue
                             
-                            # Check current candle freshness
+                            # करंट कैंडल की फ्रेशनेस चेक करें
                             current_candle_time = df.iloc[-1]['timestamp']
-                            time_diff = (now - current_candle_time).total_seconds()
-                            if time_diff > 120:  # Candle older than 2 minutes
+                            time_diff = (make_naive(get_ist_time()) - current_candle_time).total_seconds()
+                            if time_diff > 120:  # 2 मिनट से पुरानी कैंडल
                                 continue
                             
-                            # Signals for live trading (is_backtest=False)
+                            # लाइव ट्रेडिंग के लिए सिग्नल (is_backtest=False)
                             signals = detect_strategy_signals(df, self.params, is_backtest=False)
 
-                            if trade_direction == 'CALL Only':
+                            if trade_direction == 'केवल CALL':
                                 signals = [s for s in signals if s['signal'] == 'CALL']
-                            elif trade_direction == 'PUT Only':
+                            elif trade_direction == 'केवल PUT':
                                 signals = [s for s in signals if s['signal'] == 'PUT']
 
                             if signals:
@@ -757,7 +760,7 @@ class TradingBot:
                                             "tp": entry_price + self.params['tp_offset'], 
                                             "high_water_mark": entry_price,
                                             "is_paper_trading": is_paper, 
-                                            "entry_time": now.strftime('%H:%M:%S IST')
+                                            "entry_time": format_ist_time()
                                         }
                                         self.save_state()
                                         self.status = f"Trade {'Simulated' if is_paper else 'Placed'} for {symbol}."
@@ -773,12 +776,12 @@ class TradingBot:
                 logging.error(f"Critical error in strategy loop: {e}", exc_info=True)
                 self.update_heartbeat()
             
-            self.last_checked = now
+            self.last_checked = format_ist_time()
             time.sleep(10)
 
 def display_bot_health(bot):
-    """Display bot health status"""
-    st.subheader("🤖 Bot Health Monitor")
+    """बॉट की हेल्थ स्टेटस दिखाएं"""
+    st.subheader("🤖 बॉट हेल्थ मॉनिटर")
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -786,137 +789,137 @@ def display_bot_health(bot):
         status_color = bot.get_bot_status_color()
         status_text = ""
         if status_color == "green":
-            status_text = "🟢 Normal"
+            status_text = "🟢 सामान्य"
         elif status_color == "orange":
-            status_text = "🟠 Slow"
+            status_text = "🟠 उलझा हुआ"
         elif status_color == "red":
-            status_text = "🔴 Frozen"
+            status_text = "🔴 फ्रीज"
         else:
-            status_text = "⚫ Stopped"
+            status_text = "⚫ बंद"
             
-        st.markdown(f"**Status:** <span style='color:{status_color}; font-size:20px;'>{status_text}</span>", 
+        st.markdown(f"**स्थिति:** <span style='color:{status_color}; font-size:20px;'>{status_text}</span>", 
                    unsafe_allow_html=True)
     
     with col2:
-        last_check_info = bot.get_last_checked_display()
-        st.metric("Last Check", f"{last_check_info['seconds_ago']} seconds ago")
-        
-        if last_check_info['is_stale']:
-            st.error("⚠️ Data is stale")
-            if st.button("🔄 Refresh Data", key="refresh_data"):
-                st.rerun()
+        if bot.running and bot.last_checked:
+            try:
+                last_check_time = datetime.strptime(bot.last_checked, "%Y-%m-%d %H:%M:%S")
+                time_diff = (make_naive(get_ist_time()) - last_check_time).total_seconds()
                 
+                st.metric("आखिरी जाँच", f"{int(time_diff)} सेकंड पहले")
+                
+            except Exception as e:
+                st.error("समय त्रुटि")
+    
     with col3:
         if bot.running:
             time_since_heartbeat = (get_ist_time() - bot.last_heartbeat).total_seconds()
-            st.metric("Heartbeat", f"{int(time_since_heartbeat)}s")
+            st.metric("हार्टबीट", f"{int(time_since_heartbeat)}s")
             
             if time_since_heartbeat > bot.freeze_threshold:
-                st.error("❌ Freeze Alert!")
+                st.error("❌ फ्रीज अलर्ट!")
             elif time_since_heartbeat > 30:
-                st.warning("⚠️ Running Slow")
+                st.warning("⚠️ धीमा चल रहा")
             else:
-                st.success("✅ Normal")
+                st.success("✅ सामान्य")
     
     with col4:
         if bot.is_bot_frozen() and bot.running:
-            st.error("🔴 Bot is Frozen!")
-            if st.button("🔄 Refresh Bot", key="refresh_bot"):
+            st.error("🔴 बॉट फ्रीज हो गया है!")
+            if st.button("🔄 बॉट रीफ्रेश करें", key="refresh_bot"):
                 bot.running = False
                 time.sleep(2)
                 bot.start(bot.params)
                 st.rerun()
         else:
-            st.info("ℹ️ System Normal")
+            st.info("ℹ️ सिस्टम सामान्य")
+
+def display_current_time():
+    """Mobile और desktop दोनों के लिए optimized time display"""
+    current_time = get_display_time()
     
-    # Current server time display
-    st.markdown(f"**Server Time:** {get_ist_time().strftime('%Y-%m-%d %H:%M:%S IST')}")
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🕐 वर्तमान समय (IST)")
+    
+    # Mobile friendly compact display
+    col1, col2 = st.sidebar.columns([2, 1])
+    with col1:
+        st.sidebar.markdown(f"**{current_time['date']}**")
+        st.sidebar.markdown(f"**{current_time['time']}**")
+    with col2:
+        st.sidebar.markdown(f"*{current_time['day']}*")
+    
+    # Desktop detailed display
+    st.sidebar.markdown(f"*{current_time['full']}*")
+    
+    return current_time
 
-# --- Streamlit UI with Auto Refresh ---
-st.set_page_config(
-    page_title="Trading Bot Dashboard v2.0", 
-    layout="wide",
-    page_icon="🤖"
-)
+# --- Streamlit UI ---
+st.set_page_config(page_title="Trading Bot Dashboard v2.0", layout="wide")
+if 'bot' not in st.session_state: 
+    st.session_state.bot = TradingBot()
+bot = st.session_state.bot
 
-# Auto-refresh configuration
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔄 Auto Refresh Settings")
-auto_refresh = st.sidebar.checkbox("Enable Auto Refresh", value=True)
-refresh_interval = st.sidebar.selectbox("Refresh Interval (seconds)", [30, 60, 120, 300], index=1)
+# Sidebar for Mode Settings and Tools with Time Display
+st.sidebar.title("⚙️ मोड और टूल्स v2.0")
 
-if auto_refresh:
-    st.sidebar.info(f"Auto refreshing every {refresh_interval} seconds")
-    time.sleep(refresh_interval)
-    st.rerun()
+# Display current time in sidebar
+current_time = display_current_time()
 
-# Bot instance with caching
-try:
-    bot = get_bot_instance()
-except Exception as e:
-    st.error(f"Bot initialization failed: {e}")
-    bot = TradingBot()
-
-# Manual refresh button
-if st.sidebar.button("🔄 Refresh Now"):
-    st.rerun()
-
-# Sidebar for Mode Settings and Tools
-st.sidebar.title("⚙️ Mode and Tools v2.0")
-is_paper_trading = st.sidebar.toggle("Paper Trading Mode", value=True, help="When enabled, no real orders will be placed.")
+is_paper_trading = st.sidebar.toggle("पेपर ट्रेडिंग मोड", value=True, help="चालू होने पर, कोई वास्तविक ऑर्डर नहीं दिया जाएगा।")
 st.session_state.strategy_params = getattr(st.session_state, 'strategy_params', {})
 st.session_state.strategy_params['is_paper_trading'] = is_paper_trading
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Clear Instrument Cache"):
+if st.sidebar.button("🔄 इंस्ट्रूमेंट कैश साफ़ करें"):
     if os.path.exists(INSTRUMENT_CACHE_FILE):
         os.remove(INSTRUMENT_CACHE_FILE)
-        st.sidebar.success("Cache cleared!")
+        st.sidebar.success("कैश साफ़ हो गया!")
     else:
-        st.sidebar.info("No cache file to clear.")
+        st.sidebar.info("साफ़ करने के लिए कोई कैश नहीं है।")
 
-if st.sidebar.button("❌ Reset Active Trade and PnL"):
+if st.sidebar.button("❌ सक्रिय ट्रेड और PnL रीसेट करें"):
     if os.path.exists(STATE_DB):
         os.remove(STATE_DB)
-        st.sidebar.success("State file deleted! Restart the bot.")
+        st.sidebar.success("स्टेट फ़ाइल डिलीट हो गई! बॉट को फिर से शुरू करें।")
         bot.load_state() 
         st.rerun()
     else:
-        st.sidebar.info("No state file exists.")
+        st.sidebar.info("कोई स्टेट फ़ाइल मौजूद नहीं है。")
         
 if is_paper_trading:
-    st.title("📈 Trading Bot Dashboard v2.0 (Paper Trading)")
-    st.info("You are currently in Paper Trading mode. No real trades will be executed.")
+    st.title("📈 ट्रेडिंग बॉट डैशबोर्ड v2.0 (पेपर ट्रेडिंग)")
+    st.info("आप वर्तमान में पेपर ट्रेडिंग मोड में हैं। कोई वास्तविक ट्रेड नहीं किया जाएगा।")
 else:
-    st.title("💰 Trading Bot Dashboard v2.0 (Live Trading)")
-    st.warning("You are in Live Trading mode. Real money will be used!")
+    st.title("💰 ट्रेडिंग बॉट डैशबोर्ड v2.0 (लाइव ट्रेडिंग)")
+    st.warning("आप लाइव ट्रेडिंग मोड में हैं। वास्तविक धन का उपयोग किया जाएगा!")
 
-# Bot health display
+# बॉट हेल्थ डिस्प्ले
 display_bot_health(bot)
 
-st.header("1) Login and Bot Control")
+st.header("1) लॉगिन और बॉट कंट्रोल")
 c1, c2, c3 = st.columns([1.5, 1, 3])
 with c1:
     if not bot.obj:
-        if st.button("Login to Angel One"):
+        if st.button("Angel One में लॉगिन करें"):
             if bot.login(): 
                 st.rerun()
             else: 
                 st.error(bot.status)
     else:
-        st.success("Successfully logged in.")
-        if st.button("Logout"):
+        st.success("सफलतापूर्वक लॉगिन हो गया।")
+        if st.button("लॉगआउट करें"):
             bot.obj.terminateSession(CLIENT_ID)
             bot.obj = None
             st.rerun()
 with c2:
     if not bot.running:
-        if st.button("🚀 Start Bot"):
+        if st.button("🚀 बॉट शुरू करें"):
             if not st.session_state.strategy_params.get('expiry'):
-                st.error("Please select an expiry first.")
+                st.error("कृपया पहले एक एक्सपायरी चुनें।")
             else:
                 trade_mode = st.session_state.strategy_params.get('trade_mode')
-                if trade_mode == 'Automatic (All Indices)':
+                if trade_mode == 'स्वचालित (सभी इंडेक्स)':
                     st.session_state.strategy_params['indices_to_monitor'] = ALL_INDICES
                 else:
                     selected_index = trade_mode.split(" ")[1]
@@ -924,116 +927,122 @@ with c2:
                 bot.start(st.session_state.strategy_params)
                 st.rerun()
     else:
-        if st.button("🛑 Stop Bot"): 
+        if st.button("🛑 बॉट रोकें"): 
             bot.stop()
             st.rerun()
 with c3:
-    st.markdown(f"**Bot Status:** {bot.status}")
+    st.markdown(f"**बॉट स्थिति:** {bot.status}")
     
-    if bot.running:
-        last_check_info = bot.get_last_checked_display()
-        st.markdown(f"**Last Check:** {last_check_info['formatted_time']}")
-        st.markdown(f"**Time Difference:** {last_check_info['seconds_ago']} seconds")
+    if bot.running and bot.last_checked:
+        try:
+            last_check_time = datetime.strptime(bot.last_checked, "%Y-%m-%d %H:%M:%S")
+            time_diff = (make_naive(get_ist_time()) - last_check_time).total_seconds()
+            
+            st.markdown(f"**आखिरी जाँच:** {bot.last_checked}")
+            st.markdown(f"**समय अंतर:** {int(time_diff)} सेकंड")
+                
+        except Exception as e:
+            logging.error(f"Error rendering heartbeat: {e}")
 
 pnl_c1, pnl_c2 = st.columns(2)
-pnl_c1.metric("Today's Live PnL", f"₹ {bot.daily_pnl:,.2f}")
-pnl_c2.metric("Today's Paper PnL", f"₹ {bot.paper_pnl:,.2f}")
+pnl_c1.metric("आज का लाइव PnL", f"₹ {bot.daily_pnl:,.2f}")
+pnl_c2.metric("आज का पेपर PnL", f"₹ {bot.paper_pnl:,.2f}")
 
 st.markdown("---")
 if bot.active_trade:
-    mode = "Paper Trade" if bot.active_trade.get('is_paper_trading') else "Live Trade"
-    st.success(f"Active {mode}:")
+    mode = "पेपर ट्रेड" if bot.active_trade.get('is_paper_trading') else "लाइव ट्रेड"
+    st.success(f"सक्रिय {mode}:")
     st.json(bot.active_trade)
 
-st.header("2) Strategy and Trade Parameters")
+st.header("2) स्ट्रेटेजी और ट्रेड पैरामीटर")
 st.session_state.strategy_params['trade_direction'] = st.radio(
-    "Select Trade Direction:",
-    ['Both (CALL & PUT)', 'CALL Only', 'PUT Only'],
+    "ट्रेड की दिशा चुनें:",
+    ['दोनों (CALL और PUT)', 'केवल CALL', 'केवल PUT'],
     horizontal=True, 
     key='trade_direction'
 )
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.subheader("Main Settings")
+    st.subheader("मुख्य सेटिंग्स")
     st.session_state.strategy_params['trade_mode'] = st.radio(
-        "Select Trading Index", 
-        [f'Only {idx}' for idx in ALL_INDICES] + ['Automatic (All Indices)']
+        "ट्रेडिंग इंडेक्स चुनें", 
+        [f'केवल {idx}' for idx in ALL_INDICES] + ['स्वचालित (सभी इंडेक्स)']
     )
-    st.session_state.strategy_params['interval'] = st.selectbox("Candle Interval", ["5min", "1min", "15min"])
-    st.session_state.strategy_params['capital'] = st.number_input("Capital (₹)", value=100000)
-    st.session_state.strategy_params['risk_per_trade'] = st.number_input("Risk Per Trade (%)", 0.01, 10.0, value=1.0, step=0.1) / 100
+    st.session_state.strategy_params['interval'] = st.selectbox("कैंडल इंटरवल", ["5min", "1min", "15min"])
+    st.session_state.strategy_params['capital'] = st.number_input("कैपिटल (₹)", value=100000)
+    st.session_state.strategy_params['risk_per_trade'] = st.number_input("प्रति ट्रेड रिस्क (%)", 0.01, 10.0, value=1.0, step=0.1) / 100
 with c2:
-    st.subheader("Technical Indicators")
-    st.session_state.strategy_params['ema_period'] = st.number_input("EMA Period", value=25)
-    st.session_state.strategy_params['rsi_period'] = st.number_input("RSI Period", value=14)
-    st.info("MACD parameters (12, 26, 9) are standard.")
+    st.subheader("तकनीकी संकेतक")
+    st.session_state.strategy_params['ema_period'] = st.number_input("EMA पीरियड", value=25)
+    st.session_state.strategy_params['rsi_period'] = st.number_input("RSI पीरियड", value=14)
+    st.info("MACD पैरामीटर (12, 26, 9) मानक हैं।")
 with c3:
-    st.subheader("SL, TP and Trailing")
-    st.session_state.strategy_params['sl_offset'] = st.number_input("Initial SL Offset (₹)", 1.0, value=20.0, step=0.5)
-    st.session_state.strategy_params['tp_offset'] = st.number_input("TP Offset (₹)", 1.0, value=20.0, step=0.5)
-    st.session_state.strategy_params['start_trailing_after_points'] = st.number_input("Start Trailing After (Points)", 0.0, value=0.0, step=1.0)
-    st.session_state.strategy_params['trailing_sl_gap_points'] = st.number_input("Trailing SL Gap (Points)", 0.0, value=20.0, step=1.0)
-    st.session_state.strategy_params['exit_on_points_gain'] = st.number_input("Exit After Points Gain", 0.0, value=0.0, step=1.0)
-    st.session_state.strategy_params['max_daily_loss'] = st.number_input("Max Daily Loss (₹) (Live Only)", value=10000)
+    st.subheader("SL, TP और ट्रेलिंग")
+    st.session_state.strategy_params['sl_offset'] = st.number_input("प्रारंभिक SL ऑफ़सेट (₹)", 1.0, value=20.0, step=0.5)
+    st.session_state.strategy_params['tp_offset'] = st.number_input("TP ऑफ़सेट (₹)", 1.0, value=20.0, step=0.5)
+    st.session_state.strategy_params['start_trailing_after_points'] = st.number_input("इसके बाद ट्रेलिंग शुरू करें (पॉइंट्स)", 0.0, value=0.0, step=1.0)
+    st.session_state.strategy_params['trailing_sl_gap_points'] = st.number_input("ट्रेलिंग SL गैप (पॉइंट्स)", 0.0, value=20.0, step=1.0)
+    st.session_state.strategy_params['exit_on_points_gain'] = st.number_input("इतने पॉइंट्स लाभ पर बाहर निकलें", 0.0, value=0.0, step=1.0)
+    st.session_state.strategy_params['max_daily_loss'] = st.number_input("मैक्स डेली लॉस (₹) (Live Only)", value=10000)
     
-st.header("3) Select Expiry")
+st.header("3) एक्सपायरी चुनें")
 exp_c1, exp_c2 = st.columns([1,2])
 
 with exp_c1:
-    expiry_index_choice = st.selectbox("Select Index for Expiry", ALL_INDICES)
+    expiry_index_choice = st.selectbox("एक्सपायरी के लिए इंडेक्स", ALL_INDICES)
 
-if exp_c2.button(f"📅 Get {expiry_index_choice} Expiry"):
+if exp_c2.button(f"📅 {expiry_index_choice} की एक्सपायरी प्राप्त करें"):
     if bot.obj:
-        with st.spinner("Loading expiry list..."):
+        with st.spinner("एक्सपायरी लिस्ट लोड हो रही है..."):
             expiries = get_expiry_list(bot, expiry_index_choice)
             if expiries:
                 st.session_state["expiries"] = expiries
-                st.success(f"Found {len(expiries)} expiries")
+                st.success(f"{len(expiries)} एक्सपायरी मिली")
             else:
-                st.error("No expiries found. Check instrument list.")
+                st.error("कोई एक्सपायरी नहीं मिली। इंस्ट्रूमेंट लिस्ट चेक करें।")
     else: 
-        st.warning("Please login first.")
+        st.warning("पहले लॉगिन करें।")
 
-# Expiry dropdown
+# एक्सपायरी ड्रॉपडाउन
 if st.session_state.get("expiries"):
     st.session_state.strategy_params['expiry'] = st.selectbox(
-        "Select Expiry", 
+        "एक्सपायरी चुनें", 
         st.session_state.get("expiries", [])
     )
 else:
-    st.info("Click above button to load expiries")
+    st.info("ऊपर बटन दबाकर एक्सपायरी लोड करें")
 
 if is_paper_trading and bot.paper_trades_log:
-    st.header("Today's Paper Trades Log")
+    st.header("आज के पेपर ट्रेड्स का लॉग")
     st.dataframe(pd.DataFrame(bot.paper_trades_log).iloc[::-1])
 
 st.markdown("---")
-st.header("4) Backtest Strategy (With Trailing SL)")
-st.warning("Backtesting will work on only one index at a time. Please select index below.")
+st.header("4) स्ट्रेटेजी का बैकटेस्ट करें (Trailing SL के साथ)")
+st.warning("बैकटेस्टिंग एक समय में केवल एक ही इंडेक्स पर काम करेगा। कृपया नीचे से इंडेक्स चुनें।")
 
-backtest_index = st.selectbox("Select Index for Backtest", ALL_INDICES)
+backtest_index = st.selectbox("बैकटेस्ट के लिए इंडेक्स चुनें", ALL_INDICES)
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1: 
-    start_date = st.date_input("Start Date", datetime.now().date() - timedelta(days=30))
+    start_date = st.date_input("प्रारंभ तिथि", make_naive(get_ist_time()).date() - timedelta(days=30))
 with c2: 
-    end_date = st.date_input("End Date", datetime.now().date() - timedelta(days=1))
+    end_date = st.date_input("अंतिम तिथि", make_naive(get_ist_time()).date() - timedelta(days=1))
 with c3: 
-    hypo_opt_price = st.number_input("Hypothetical Option Entry (₹)", 1.0, value=120.0, step=0.5)
+    hypo_opt_price = st.number_input("काल्पनिक ऑप्शन एंट्री (₹)", 1.0, value=120.0, step=0.5)
 with c4: 
-    trade_cost = st.number_input("Trade Cost (₹)", 0.0, value=50.0, step=1.0)
+    trade_cost = st.number_input("प्रति ट्रेड लागत (₹)", 0.0, value=50.0, step=1.0)
 with c5: 
-    trade_type_backtest = st.selectbox("Backtest Trade Type", ["CALL", "PUT"])
+    trade_type_backtest = st.selectbox("बैकटेस्ट ट्रेड प्रकार", ["CALL", "PUT"])
 with c6: 
-    slippage = st.number_input("Slippage (₹)", 0.0, value=0.5, step=0.1)
+    slippage = st.number_input("स्लिपेज (₹)", 0.0, value=0.5, step=0.1)
 
-if st.button("▶ Run Backtest Now (With Trailing SL)"):
+if st.button("▶ अभी बैकटेस्ट चलाएं (Trailing SL के साथ)"):
     if not bot.obj: 
-        st.error("Please login first.")
+        st.error("कृपया पहले लॉगिन करें।")
     elif start_date > end_date: 
-        st.error("Start date must be before end date.")
+        st.error("प्रारंभ तिथि अंतिम तिथि से पहले होनी चाहिए।")
     else:
-        with st.spinner(f"Running backtest for {backtest_index}..."):
+        with st.spinner(f"{backtest_index} पर बैकटेस्ट चल रहा है..."):
             all_trades = run_backtest_with_trailing_sl(
                 bot, backtest_index, start_date, end_date, 
                 st.session_state.strategy_params,
@@ -1041,67 +1050,47 @@ if st.button("▶ Run Backtest Now (With Trailing SL)"):
             )
             
             if all_trades is None:
-                st.error("Error running backtest.")
+                st.error("बैकटेस्ट चलाने में त्रुटि हुई।")
             elif not all_trades: 
-                st.info(f"No trades found in selected date range for {backtest_index}.")
+                st.info(f"{backtest_index} में चयनित तिथि सीमा में कोई ट्रेड नहीं मिला।")
             else:
                 trades_df = pd.DataFrame(all_trades)
-                st.success(f"Backtest completed! Found {len(all_trades)} trades.")
+                st.success(f"बैकटेस्ट पूरा हुआ! {len(all_trades)} ट्रेड मिले।")
                 
-                # Display trades with Trailing SL
+                # Trailing SL के साथ ट्रेड्स दिखाएं
                 st.dataframe(trades_df)
                 
-                # Performance analysis
+                # परफॉर्मेंस एनालिसिस
                 total_pnl = trades_df['net_pnl'].sum()
                 wins = trades_df[trades_df['net_pnl'] > 0]
                 sl_hits = trades_df[trades_df['status'] == 'SL_HIT']
                 tp_hits = trades_df[trades_df['status'] == 'TP_HIT']
                 trailing_trades = trades_df[trades_df['high_water_mark'].astype(float) > trades_df['option_entry'].astype(float)]
                 
-                st.markdown("### Backtest Summary (With Trailing SL)")
+                st.markdown("### बैकटेस्ट सारांश (Trailing SL के साथ)")
                 k1, k2, k3, k4 = st.columns(4)
                 
-                k1.metric("Total Net PnL", f"₹ {total_pnl:,.2f}")
-                k2.metric("Total Trades", len(trades_df))
-                k2.metric("Profitable Trades", len(wins))
-                k3.metric("SL Hits", len(sl_hits))
-                k3.metric("TP Hits", len(tp_hits))
-                k4.metric("Win Rate", f"{(len(wins)/len(trades_df))*100:.2f}%" if len(trades_df) > 0 else "0%")
-                k4.metric("Trailing SL Active", f"{len(trailing_trades)} trades")
+                k1.metric("कुल नेट PnL", f"₹ {total_pnl:,.2f}")
+                k2.metric("कुल ट्रेड्स", len(trades_df))
+                k2.metric("लाभ वाले ट्रेड्स", len(wins))
+                k3.metric("SL हिट", len(sl_hits))
+                k3.metric("TP हिट", len(tp_hits))
+                k4.metric("जीत दर", f"{(len(wins)/len(trades_df))*100:.2f}%" if len(trades_df) > 0 else "0%")
+                k4.metric("Trailing SL सक्रिय", f"{len(trailing_trades)} ट्रेड्स")
                 
                 if len(trailing_trades) > 0:
-                    st.info(f"✅ Trailing SL active in {len(trailing_trades)} trades")
+                    st.info(f"✅ Trailing SL {len(trailing_trades)} ट्रेड्स में सक्रिय हुआ")
                 
-                # Equity curve
+                # इक्विटी कर्व
                 trades_df['cum_pnl'] = trades_df['net_pnl'].cumsum()
                 fig, ax = plt.subplots(figsize=(10, 6))
                 ax.plot(pd.to_datetime(trades_df['date']), trades_df['cum_pnl'], linewidth=2)
                 ax.set_xlabel('Date', fontsize=12)
                 ax.set_ylabel('Total PnL (₹)', fontsize=12)
-                ax.set_title('Equity Curve with Trailing SL', fontsize=14)
+                ax.set_title('Trailing SL carv graph', fontsize=14)
                 ax.grid(True, alpha=0.3)
                 fig.autofmt_xdate()
                 st.pyplot(fig)
 
 st.markdown("---")
-st.success("**v2.0 New Features:** 🟢 Normal | 🟠 Slow | 🔴 Frozen | ✅ Trailing SL Backtesting | 🎯 Real-time Monitoring | 🌏 Timezone Fixed")
-
-# Footer
-st.markdown("---")
-st.markdown("### 📝 Note:")
-st.info("""
-- **Backtesting** now works with Trailing Stop Loss
-- **Live Trading** trades only on current candle
-- **Bot Health Monitor** shows real-time status
-- **Timezone issues** completely fixed
-- **Auto-refresh** keeps data fresh on mobile
-""")
-
-# Mobile optimization
-st.sidebar.markdown("---")
-st.sidebar.info("""
-**Mobile Users:**
-- Auto-refresh keeps data updated
-- Use 'Refresh Now' if data seems stale
-- IST timezone ensures accurate timing
-""")
+st.success("**v2.0 नई सुविधाएं:** 🟢 सामान्य | 🟠 उलझा हुआ | 🔴 फ्रीज | ✅ Trailing SL Backtesting | 🎯 Real-time Monitoring | 🕐 IST Time Display")
