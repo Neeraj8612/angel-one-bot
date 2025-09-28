@@ -1582,7 +1582,7 @@ def main():
                     col1.metric("कुल PnL", f"₹{total_pnl:,.2f}")
                     col2.metric("कुल ट्रेड्स", len(trades_df))
                     col3.metric("जीतने वाले ट्रेड्स", wins)
-                    col4.metric("जीत दर", f"{(wins/len(trades_df))*100:.1f}%" if trades_df else "0%")
+                    col4.metric("जीत दर", f"{(wins/len(trades_df))*100:.1f}%" if len(trades_df) > 0 else "0%")
     
     # Footer
     st.markdown("---")
@@ -1598,3 +1598,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
