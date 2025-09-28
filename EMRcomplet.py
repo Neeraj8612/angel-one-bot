@@ -283,7 +283,7 @@ class AlertSystem:
         alerts = {
             'trade_executed': {
                 'subject': 'Trade Executed',
-                'message': f"Trade Executed: {trade_data.get('symbol')} | Price: {trade_data.get('entry_price')} | Qty: {trade_data.get('quantity')}"
+                'message': f"Trade Executed: {trade_data.get('symbol', 'N/A')} | Price: {trade_data.get('entry_price', 'N/A')} | Qty: {trade_data.get('quantity', 'N/A')}" if trade_data else "Trade Executed: Details not available"
             },
             'sl_hit': {
                 'subject': 'Stop Loss Hit',
@@ -1598,4 +1598,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
