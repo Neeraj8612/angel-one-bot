@@ -77,7 +77,7 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 # --- Central Index Configuration ---
 INDEX_CONFIG = {
     "NIFTY": {"lot_size": 75, "exchange": "NFO", "strike_step": 50, "instrument_name": "NIFTY"},
-    "BANKNIFTY": {"lot_size": 35, "exchange": "NFO", "strike_step": 100, "instrument_name": "NIFTY BANK"},
+    "BANKNIFTY": {"lot_size": 35, "exchange": "NFO", "strike_step": 100, "instrument_name": "BANKNIFTY"},
     "FINNIFTY": {"lot_size": 65, "exchange": "NFO", "strike_step": 50, "instrument_name": "NIFTY FIN SERVICE"},
     "SENSEX": {"lot_size": 20, "exchange": "BFO", "strike_step": 100, "instrument_name": "SENSEX"}
 }
