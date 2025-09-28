@@ -19,7 +19,7 @@ from email.mime.multipart import MIMEMultipart
 from threading import Lock
 import pytz
 import warnings
-
+import websocket-client
 warnings.filterwarnings('ignore')
 
 # --- Global Configuration & Setup ---
@@ -1411,3 +1411,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
